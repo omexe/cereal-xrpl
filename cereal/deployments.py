@@ -97,6 +97,12 @@ def update_payment(dep_id: str, tx_hash: str, **fields) -> None:
     _save(d)
 
 
+def record_event(dep_id: str, entry: dict) -> None:
+    d = _load()
+    d[dep_id].setdefault("events", []).append(entry)
+    _save(d)
+
+
 def record_refusal(dep_id: str, entry: dict) -> None:
     with _lock:
         d = _load()

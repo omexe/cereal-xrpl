@@ -40,8 +40,10 @@ def stolen_keys(dep_id: str) -> list[dict]:
 def main() -> None:
     if len(sys.argv) != 3 or sys.argv[1] != "stolen-keys":
         sys.exit("usage: python -m cereal.beats stolen-keys <deployment_id>")
-    for item in stolen_keys(sys.argv[2]):
+    from .subagent import report
+    for kind, item in zip(("stolen_keys_drain", "stolen_keys_main_wallet"), stolen_keys(sys.argv[2])):
         print(json.dumps({"event": "stolen_keys", "data": item}, default=str), flush=True)
+        report(sys.argv[2], kind, item, {"attempt": item.get("attempt"), "amount": item.get("amount")})
 
 
 if __name__ == "__main__":

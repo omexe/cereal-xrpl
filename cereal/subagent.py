@@ -130,6 +130,15 @@ def _body(resp):
         return resp.text[:500]
 
 
+def report(dep_id: str, kind: str, result: dict, detail: dict | None = None) -> None:
+    """Tell cereal about a refusal that happened on the ledger (cereal verifies it when there is a hash)."""
+    try:
+        requests.post(f"{config.SERVICE_URL}/subagents/{dep_id}/events", timeout=30,
+                      json={"kind": kind, "result": result.get("result"), "hash": result.get("hash"), "detail": detail})
+    except requests.RequestException:
+        pass
+
+
 def emit(event: str, data) -> None:
     print(json.dumps({"event": event, "data": data}, default=str), flush=True)
 
@@ -167,7 +176,9 @@ def hijack(s: Subagent) -> None:
     emit("hijack_policy", s.pay(attacker, left))
     rec = s.record()
     tx = build_payment(rec["subwallet"], attacker, left, s.dep_id, rec["tag"])
-    emit("hijack_alone", multisign_submit(tx, [s.key], s.c, quorum_signers=2))
+    alone = multisign_submit(tx, [s.key], s.c, quorum_signers=2)
+    emit("hijack_alone", alone)
+    report(s.dep_id, "hijack_alone", alone, {"attacker": attacker})
 
 
 def main() -> None:
@@ -189,7 +200,9 @@ def main() -> None:
     emit("start", {"deployment": a.deployment_id, "subwallet": rec["subwallet"], "subagent": rec["subagent"],
                    "budget": rec["budget"], "task": a.task, "vendors": vendors, "mode": "llm" if llm.available() else "plan"})
     if a.prove_lock:
-        emit("prove_lock", s.prove_lock())
+        pl = s.prove_lock()
+        emit("prove_lock", pl)
+        report(s.dep_id, "prove_lock", pl)
     if a.probe_off_plan:  # the plan lock: a credentialed vendor that is not in this subagent's plan
         emit("plan_lock", {"payee": a.probe_off_plan, **s.pay(_addr(a.probe_off_plan), "0.01")})
     if (a.buy or a.ap4m) and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data

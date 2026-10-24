@@ -42,12 +42,14 @@ class DeployRequest(BaseModel):
     approval_threshold: str | None = None
     sweep_when_done: bool = False            # leftovers go home automatically when the subagent reports done
     name: str | None = None                  # the wallet's name, e.g. "Market Sizing"
+    folder: str | None = None                # the design's folders (e.g. "Market Research"); shows in the export
     sentence: str | None = None              # the plain-English sentence it was created from
     speculos_payment_decision: str | None = None  # Speculos demos only: the owner's button for large payments
 
 
 class WalletRequest(BaseModel):
     sentence: str
+    folder: str | None = None
     speculos_decision: str | None = None          # Speculos demos only: the owner's button for the budget
     speculos_payment_decision: str | None = None  # ... and for payments above the threshold
 
@@ -75,6 +77,13 @@ class CosignRequest(BaseModel):
 class Ap4mRequest(BaseModel):
     resource: str
     max_rlusd: str = "0.25"  # the most this subagent will pay for the resource
+
+
+class EventReport(BaseModel):
+    kind: str            # hijack_alone | stolen_keys_drain | stolen_keys_main_wallet | prove_lock
+    result: str          # the ledger's code, e.g. tefBAD_QUORUM, tecPATH_PARTIAL, tefBAD_SIGNATURE
+    hash: str | None = None
+    detail: dict | None = None
 
 
 class DoneRequest(BaseModel):
@@ -136,7 +145,7 @@ def deploy(req: DeployRequest) -> dict:
         rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours, req.vendor_class)
         if req.plan:
             rec = deployments.update(rec["id"], plan=req.plan)
-        extra = {k: v for k, v in {"approval_threshold": req.approval_threshold, "name": req.name,
+        extra = {k: v for k, v in {"approval_threshold": req.approval_threshold, "name": req.name, "folder": req.folder,
                                    "sentence": req.sentence, "sweep_when_done": req.sweep_when_done or None,
                                    "speculos_payment_decision": req.speculos_payment_decision}.items() if v is not None}
         if extra:
@@ -198,6 +207,7 @@ def wallet_create(req: WalletRequest) -> dict:
     out = deploy(DeployRequest(task=card["name"], budget=card["budget"], allowed_payees=card["allowed_payees"],
                                expires_in_hours=card["expires_in_hours"], approval_threshold=card["approval_threshold"],
                                sweep_when_done=card["sweep_when_done"], name=card["name"], sentence=req.sentence,
+                               folder=req.folder,
                                speculos_decision=req.speculos_decision,
                                speculos_payment_decision=req.speculos_payment_decision))
     return {**out, "card": card}
@@ -400,6 +410,61 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     deployments.record_payment(rec["id"], {"to": tx.destination, "amount": amt.value, "rail": "direct", **result,
                                            "at": datetime.now(timezone.utc).isoformat()})
     return result
+
+
+@app.post("/subagents/{dep_id}/events")
+def report_event(dep_id: str, ev: EventReport) -> dict:
+    """A refusal that happened on the ledger itself (no cereal signature involved), reported by a subagent or a demo
+    beat. With a hash, cereal checks the ledger: the event is marked verified only if the validated result matches."""
+    from . import events
+    if not deployments.get(dep_id):
+        raise HTTPException(404, "unknown deployment")
+    if ev.kind not in events.REPORTABLE:
+        return _refuse("unknown_event_kind", allowed=sorted(events.REPORTABLE))
+    verified = None
+    if ev.hash:
+        try:
+            r = client().request(Tx(transaction=ev.hash)).result
+            verified = bool(r.get("validated")) and r.get("meta", {}).get("TransactionResult") == ev.result
+        except Exception:
+            verified = False
+    entry = {"kind": ev.kind, "result": ev.result, "hash": ev.hash, "verified": verified, "detail": ev.detail,
+             "at": datetime.now(timezone.utc).isoformat()}
+    deployments.record_event(dep_id, entry)
+    return {"ok": True, **entry}
+
+
+@app.get("/plan")
+def plan_preview(goal: str, envelope: str = "2") -> dict:
+    """Part 5: the quote-based plan for a goal, read-only: every vendor's price, which one wins and why, the budget
+    each subagent would get, and what stays in the main wallet. Nothing is signed or deployed."""
+    from . import pricing
+    p = pricing.plan(goal, Decimal(envelope))
+    return {**p, "summary": pricing.summary(p)}
+
+
+@app.get("/export.json")
+def export_json() -> dict:
+    """Part 5: every payment across wallets and rails, with totals by wallet, vendor, rail and folder."""
+    from . import books
+    rs = books.rows()
+    return {"rows": rs, "totals": books.totals(rs)}
+
+
+@app.get("/export.csv")
+def export_csv():
+    """Part 5: the same rows as a CSV download for finance."""
+    from fastapi.responses import Response
+    from . import books
+    return Response(books.to_csv(books.rows()), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=cereal-payments.csv"})
+
+
+@app.get("/events")
+def security_events(limit: int = 200) -> list[dict]:
+    """The security log: every refused or out-of-policy attempt, who stopped it, why, the outcome and the proof."""
+    from . import events
+    return events.feed()[:limit]
 
 
 @app.post("/subagents/{dep_id}/ap4m")
