@@ -44,9 +44,15 @@ class MainAgent:
         """Main wallet balances, outstanding subagent budget and the caps."""
         return _get("/main")
 
-    def deploy_subagent(self, task: str, budget: str, allowed_payees: list[str] | None = None) -> dict:
-        """Deploy a subagent for one task into a new subwallet funded with exactly `budget` RLUSD."""
-        return _post("/subagents", {"task": task, "budget": str(budget), "allowed_payees": allowed_payees or self.payees})
+    def deploy_subagent(self, task: str, budget: str, allowed_payees: list[str] | None = None,
+                        speculos_decision: str | None = None) -> dict:
+        """Deploy a subagent for one task into a new subwallet funded with exactly `budget` RLUSD.
+
+        With a Ledger configured the owner approves the budget on the device first (this call waits for it)."""
+        body = {"task": task, "budget": str(budget), "allowed_payees": allowed_payees or self.payees}
+        if speculos_decision:
+            body["speculos_decision"] = speculos_decision
+        return _post("/subagents", body, timeout=900)
 
     def start_subagent(self, deployment_id: str, task: str, payments: int = 2, extra: list[str] | None = None) -> dict:
         """Launch the subagent process for a deployment (it signs with its own key only)."""
@@ -88,13 +94,30 @@ class MainAgent:
         return _post(f"/subagents/{deployment_id}/reclaim")
 
 
+def owner_recover(deployment_id: str) -> dict:
+    """Not a main-agent tool: the OWNER takes a subwallet's money back with the Ledger alone (cereal/recover.py).
+
+    No cereal key, no service call for signing: the device's weight 2 meets the subwallet's quorum by itself."""
+    from .recover import recover_deployment
+    return recover_deployment(deployment_id)
+
+
 def plan_even(goal: str, envelope: Decimal, n: int) -> list[tuple[str, str]]:
     each = (envelope / n).quantize(Decimal("0.01"), rounding=ROUND_DOWN)
     return [(f"{goal} (part {i + 1} of {n})", str(each)) for i in range(n)]
 
 
-def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict) -> None:
+def _device_saw(screens: list[str]) -> str:
+    f = dict(x.split(": ", 1) for x in screens if ": " in x)
+    dest = f.get("Destination", "")
+    return f"{f.get('Transaction Type', '?')} {f.get('Amount', '?')} {f.get('Currency', '')} → {dest[:10]}…".strip()
+
+
+def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, rejected: list[dict] | None = None) -> None:
     print("\nmain wallet", before["address"])
+    for rj in rejected or []:
+        print(f"├─ ✗ rejected on the owner's Ledger: {rj.get('task')}  (device showed {_device_saw(rj.get('screens', []))}); "
+              f"transactions sent: {rj.get('sent_transactions', 0)}")
     for dep_id in ids:
         r = _get(f"/subagents/{dep_id}")
         print(f"├─ subagent {r['subagent']}  [{r['status']}]  budget {r['budget']} RLUSD  task: {r['task']}")
@@ -102,7 +125,10 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict) -> N
         h = r.get("hashes", {})
         print(f"│     activate {EXPLORER}/transactions/{h.get('activate')}")
         print(f"│     lock     " + ", ".join(x[:10] + "…" for x in h.get("lock", []) if x))
-        print(f"│     fund     {EXPLORER}/transactions/{h.get('fund')}")
+        ap = r.get("approval")
+        if ap:
+            print(f"│     approve  owner {ap.get('result')} on Ledger {str(ap.get('by'))[:10]}…  (device showed {_device_saw(ap.get('screens', []))})")
+        print(f"│     fund     {EXPLORER}/transactions/{h.get('fund')}" + ("  (signed by the Ledger alone)" if ap else ""))
         for ev in agent.logs.get(dep_id, []):
             e, d = ev.get("event"), ev.get("data", {})
             if e == "prove_lock":
@@ -126,19 +152,29 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict) -> N
             print(f"│     pay {p['amount']} → {p['to'][:10]}…  {p.get('result')}  {EXPLORER}/transactions/{p.get('hash')}")
         for x in h.get("reclaim", []) or []:
             print(f"│     reclaim  {EXPLORER}/transactions/{x}")
+        for x in h.get("recover", []) or []:
+            print(f"│     recover  {EXPLORER}/transactions/{x}  (owner's Ledger alone: no cereal key)")
     paid = sum(Decimal(p["amount"]) for d in ids for p in _get(f"/subagents/{d}")["payments"] if p.get("ok"))
     delta = Decimal(before["rlusd"]) - Decimal(after["rlusd"])
     print(f"\nmain wallet RLUSD {before['rlusd']} → {after['rlusd']}  (Δ {delta}); subagent payments {paid}; "
           f"{'reconciled ✓' if abs(delta - paid) < Decimal('0.000001') else 'MISMATCH'}")
 
 
-def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lock: bool, beats: bool = False) -> None:
+def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lock: bool, beats: bool = False,
+        device_beats: bool = False) -> None:
     before = _get("/main")
     if payees is None:  # Part 2: any vendor credentialed on-ledger; Part 1: allowlist vendor A
         payees = [] if before.get("policy", {}).get("vendor_credentials") else [config.address("VENDOR_A")]
     agent = MainAgent(payees, prove_lock or beats)
     print(f"goal: {goal}\nenvelope: {envelope} RLUSD · main wallet {before['rlusd']} RLUSD · caps {before['caps']}")
     ids: list[str] = []
+    rejected: list[dict] = []
+    if device_beats and not before.get("policy", {}).get("device_funding"):
+        sys.exit("--device needs the Ledger configured: LEDGER_ADDRESS set and CEREAL_DEVICE_FUNDING not 0")
+    if device_beats:  # the main agent asks for one budget too many; the owner says no on the device
+        r = agent.deploy_subagent(f"{goal} (an extra subagent the owner did not ask for)", "1", speculos_decision="reject")
+        print(f"deploy 1 RLUSD → owner {r.get('refused')} on the Ledger; transactions sent: {r.get('sent_transactions')}")
+        rejected.append({"task": "an extra subagent the owner did not ask for", **r})
     if llm.available():
         def deploy_tool(task: str, budget: str) -> dict:
             r = agent.deploy_subagent(task, budget)
@@ -181,12 +217,18 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
         if beats and len(ids) > 1:
             for ev in agent.run_beat("stolen-keys", ids[1]):
                 print(f"beat stolen-keys {ids[1]}: {ev['data']['attempt']}: {ev['data'].get('result')}")
-        for d in ids:
+        recover_ids = ids[-1:] if device_beats else []
+        for d in recover_ids:  # cereal goes dark: the owner's Ledger takes this subagent's money back alone
+            out = owner_recover(d)
+            sweep = next((st for st in out["steps"] if st["step"] == "sweep"), {})
+            print(f"recover {d} with the owner's Ledger alone: returned {sweep.get('amount', '0')} RLUSD "
+                  f"{'ok' if out.get('ok') else out}")
+        for d in [x for x in ids if x not in recover_ids]:
             rc = agent.reclaim_subagent(d)
             print(f"reclaim {d}: returned {rc.get('returned')} RLUSD {'ok' if rc.get('ok') else rc}")
     time.sleep(2)
-    print_tree(agent, ids, before, agent.main_wallet())
-    print("\nretire the subwallets in ~15 minutes: python -m cereal.main_agent --retire-all")
+    print_tree(agent, ids, before, agent.main_wallet(), rejected)
+    print("\nretire the subwallets in ~15 minutes: make retire")
 
 
 def retire_all() -> int:
@@ -211,10 +253,12 @@ def main() -> None:
     ap.add_argument("--payee", action="append"); ap.add_argument("--prove-lock", action="store_true")
     ap.add_argument("--retire-all", action="store_true")
     ap.add_argument("--beats", action="store_true", help="Part 2 demo: revoked vendor, hijack, stolen keys")
+    ap.add_argument("--device", action="store_true", help="Part 3 demo: owner rejects one budget on the Ledger, "
+                                                          "approves the rest, recovers one subwallet alone")
     a = ap.parse_args()
     if a.retire_all:
         sys.exit(1 if retire_all() else 0)  # non-zero while some are still too young
-    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats)
+    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats, a.device)
 
 
 if __name__ == "__main__":

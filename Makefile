@@ -1,5 +1,5 @@
 PY=.venv/bin/python
-.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats retire export ledger-check
+.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device retire export ledger-check
 setup:        ## venv + deps
 	python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 pool:         ## create/load roles → .env (run early: burners must age 256 ledgers)
@@ -25,6 +25,8 @@ main-agent:   ## Part 1 demo: one goal → two subagents in two subwallets → r
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list from vendor A" --envelope 2 --subagents 2
 beats:        ## Part 2 demo: revoked vendor refused with evidence, hijack stopped twice, stolen keys capped
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --beats
+device:       ## Part 3 demo: owner rejects a budget on the Ledger, approves two, recovers one subwallet alone
+	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --device
 retire:       ## retire reclaimed or recovered subwallets (demo + test stores) once ≥256 ledgers old; returns the XRP reserve; safe to rerun
 	@for f in deployments.json deployments.testnet.json deployments.testnet2.json deployments.testnet3.json; do \
 	  [ -f $$f ] && echo "== $$f" && CEREAL_DEPLOYMENTS_FILE=$$f .venv/bin/python -m cereal.main_agent --retire-all; \
