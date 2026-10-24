@@ -9,4 +9,4 @@ node_modules/
 jobs.json
 exports/
 keys/
-deployments.json
+deployments*.json

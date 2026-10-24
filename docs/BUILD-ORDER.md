@@ -52,7 +52,7 @@ Acceptance: a subagent pays an allowlisted payee (co-signed `tesSUCCESS`); the s
 Acceptance (the Part 1 demo): one goal → two subagents in two subwallets, deployed and funded from the main wallet, each paying twice, both reclaimed; the run prints the tree `main → subagent → subwallet → payments` with explorer links; the main wallet balance before and after reconciles to the payments.
 
 ### p1.7 Part 1 tests and record  ✅
-`tests/test_part1.py`: caps (per-subagent, outstanding, active count, invalid budget), co-sign refusals before any network call (unknown/inactive deployment, wrong account, payee not allowed, not RLUSD), the even planner. 11 tests pass.
+`tests/test_part1.py` (offline, `make test`): caps, co-sign refusals before any network call, the even planner; 11 pass. `tests/test_part1_testnet.py` (live, opt-in, `make acceptance`): every acceptance check asserted against the ledger; `test_part1_retire_when_old_enough` retires the test store's subwallets once they are ~15 min old (rerun `make acceptance` later, or `CEREAL_DEPLOYMENTS_FILE=deployments.testnet.json` with `--retire-all`).
 
 **Part 1 acceptance, verified on testnet Sat Oct 24:**
 | Check | Evidence |
@@ -64,6 +64,7 @@ Acceptance (the Part 1 demo): one goal → two subagents in two subwallets, depl
 | Reclaim | sweep `8A3ABE18…`, trust line closed `591DF5C5…`; retire too early → `too_young` (225 ledgers) |
 | `make main-agent` (goal → 2 subagents) | d_31496c: activate `7D3FC29E…`, fund `AA045F5D…`, pays `7719802A…` `DDAE7F5E…`, reclaim `2B003D75…` `2BE5DC58…`; d_379fdc: activate `7FB20117…`, fund `337F945F…`, pays `2387359B…` `C60F96AF…`, reclaim `44647F80…` `642C46A6…`; both proved `tefBAD_QUORUM` alone; main wallet 20.7477 → 19.7477 RLUSD = the four 0.25 payments, reconciled |
 | Retire | pending: `python -m cereal.main_agent --retire-all` once each subwallet is ≥256 ledgers old |
+| `make acceptance` (opt-in pytest, live testnet, own service on :8011 with outstanding cap 2.5) | passed Oct 24 in 2 min 49 s: per-subagent and outstanding cap refusals with the main wallet's Sequence unchanged; deploys d_6dd34f (activate `16A4B410…`, fund `BF42DFCD…`), d_409220 (activate `D793648A…`, fund `1B3835CF…`); on-ledger: master disabled, quorum 2, signers = {subagent, cereal}, trust-line limit = budget; each subagent alone `tefBAD_QUORUM`; 4 payments verified multi-signed with SourceTag and memo; payee/over-budget refusals with the subwallet's Sequence unchanged; reclaims with trust lines deleted; main −1.0 RLUSD = vendor A +1.0 RLUSD; retire refused too early. Evidence JSON in `exports/` |
 
 
 ---

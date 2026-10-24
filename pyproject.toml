@@ -1,3 +1,4 @@
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = ["testnet: live XRPL testnet acceptance tests (opt-in: --run-testnet or CEREAL_RUN_TESTNET=1)"]
