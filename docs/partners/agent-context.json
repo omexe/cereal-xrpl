@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "research_date": "2026-10-24",
+  "default_topic": "index",
+  "network_policy": "native XRPL testnet only (xrpl:1)",
+  "topics": {
+    "index": {"path": "docs/partners/README.md", "description": "Scope, service map, and evidence labels"},
+    "ledger": {"path": "docs/partners/ledger.md", "description": "Device sessions, XRP signing, and SDK contract conflicts"},
+    "quicknode": {"path": "docs/partners/quicknode.md", "description": "XRPL RPC, Streams, Webhooks, and MCP"},
+    "mastercard": {"path": "docs/partners/mastercard.md", "description": "Documentation MCP, authentication, Agent Pay, and AP4M"},
+    "aws": {"path": "docs/partners/aws.md", "description": "AgentCore Runtime, Gateway, Identity, Payments, and Strands"},
+    "architecture": {"path": "docs/partners/architecture.md", "description": "Repo-specific transaction lifecycle and integration design"},
+    "hooks": {"path": "docs/partners/agent-hooks.md", "description": "Offline context loading and optional live documentation tools"},
+    "gaps": {"path": "docs/partners/open-questions.md", "description": "Unresolved contracts, onboarding, and conflicting examples"}
+  }
+}

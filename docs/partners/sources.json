@@ -1,0 +1,926 @@
+{
+  "schema_version": 1,
+  "research_date": "2026-10-24",
+  "scope": "Hackathon-linked partner products and native XRPL integration; not entire vendor catalogs.",
+  "status_definitions": {
+    "read": "Content inspected; not proof of live API access or successful integration.",
+    "discovered_only": "Link located; target contents or MCP schemas not inspected.",
+    "inaccessible": "Attempted opening but content access was denied."
+  },
+  "sources": [
+    {
+      "id": "S001",
+      "vendor": "quicknode",
+      "url": "https://api.quicknode.com/streams/rest/openapi.json",
+      "label": "Streams OpenAPI discovery",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S002",
+      "vendor": "quicknode",
+      "url": "https://api.quicknode.com/webhooks/rest/openapi.json",
+      "label": "Webhooks OpenAPI",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": [
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S003",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/ai/",
+      "label": "AI entry point",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S004",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/llms.txt",
+      "label": "Mastercard LLM documentation index",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S005",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/platform/documentation/agent-toolkit/",
+      "label": "Agent Toolkit",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S006",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/platform/documentation/agent-toolkit/mcp-overview/",
+      "label": "Mastercard MCP",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/agent-hooks.md",
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S007",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/platform/documentation/authentication/using-oauth-1a-to-access-mastercard-apis/",
+      "label": "OAuth 1.0a guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S008",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/platform/documentation/authentication/using-oauth-2-to-access-mastercard-apis/",
+      "label": "OAuth 2.0 guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S009",
+      "vendor": "mastercard",
+      "url": "https://developer.mastercard.com/platform/documentation/quick-start-guide/",
+      "label": "Quick Start",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S010",
+      "vendor": "mastercard",
+      "url": "https://developer.mcp.mastercard.com",
+      "label": "Mastercard remote MCP endpoint",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S011",
+      "vendor": "ledger",
+      "url": "https://developers.ledger.com/docs/ai-tools/ledger-dmk-skills",
+      "label": "Ledger skills",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/agent-hooks.md",
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S012",
+      "vendor": "ledger",
+      "url": "https://developers.ledger.com/docs/ai-tools/overview",
+      "label": "Ledger AI overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S013",
+      "vendor": "ledger",
+      "url": "https://developers.ledger.com/docs/device-interaction/dmk-ts/integration/how_to/dmk",
+      "label": "DMK reference",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S014",
+      "vendor": "ledger",
+      "url": "https://developers.ledger.com/docs/device-interaction/dmk-ts/references/signers/xrp",
+      "label": "XRP signer reference",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S015",
+      "vendor": "ledger",
+      "url": "https://developers.ledger.com/docs/ledger-live/exchange/earn",
+      "label": "Earn overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S016",
+      "vendor": "ledger",
+      "url": "https://developers.ledger.com/xrplnyc",
+      "label": "hackathon page",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S017",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/agents-tools-runtime.html",
+      "label": "Runtime",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S018",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/gateway.html",
+      "label": "Gateway",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S019",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/identity.html",
+      "label": "Identity",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S020",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/mcp-getting-started.html",
+      "label": "AgentCore MCP",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/agent-hooks.md",
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S021",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/memory.html",
+      "label": "Memory",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S022",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/payments-concepts.html",
+      "label": "core concepts",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S023",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/payments-create-session.html",
+      "label": "Session reference",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S024",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/payments-prerequisites.html",
+      "label": "Prerequisites",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S025",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/payments-process-payment.html",
+      "label": "Processing guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S026",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/payments.html",
+      "label": "Payments",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S027",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-invoke-agent.html",
+      "label": "Invocation guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S028",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/runtime-service-contract.html",
+      "label": "Service contract",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S029",
+      "vendor": "aws",
+      "url": "https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/what-is-bedrock-agentcore.html",
+      "label": "Overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S030",
+      "vendor": "mastercard",
+      "url": "https://docs.google.com/presentation/d/1l-SIRHjXO-5IxkCFKT5szAcs2u-zg_dT/edit?slide=id.p1#slide=id.p1",
+      "label": "Slides",
+      "status": "inaccessible",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Browser returned You need access; slide contents were not reviewed.",
+      "referenced_by": [
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S031",
+      "vendor": "mastercard",
+      "url": "https://form.mastercard.com/jfe/form/SV_ewCgmPZvQhIzx8G",
+      "label": "Form",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": [
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S032",
+      "vendor": "ledger",
+      "url": "https://github.com/LedgerHQ/device-management-kit-ts-workshop/blob/main/xrpl-hackathon/app/package.json",
+      "label": "workshop package.json",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S033",
+      "vendor": "ledger",
+      "url": "https://github.com/LedgerHQ/device-management-kit-ts-workshop/blob/main/xrpl-hackathon/app/src/ledger/solution.ts",
+      "label": "official solution",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S034",
+      "vendor": "ledger",
+      "url": "https://github.com/LedgerHQ/device-management-kit-ts-workshop/blob/main/xrpl-hackathon/app/src/xrpl.ts",
+      "label": "xrpl.ts",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S035",
+      "vendor": "ledger",
+      "url": "https://github.com/LedgerHQ/device-management-kit-ts-workshop/tree/main/xrpl-hackathon",
+      "label": "README",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S036",
+      "vendor": "project",
+      "url": "https://github.com/omexe/cereal-xrpl",
+      "label": "Repository",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "local git checkout",
+      "note": "Read repository files at baseline commit e90b994e5972030ed2c05c7809d66eb45a2d62ee.",
+      "referenced_by": [
+        "docs/partners/architecture.md"
+      ]
+    },
+    {
+      "id": "S037",
+      "vendor": "xrpl",
+      "url": "https://hackathons.xrpl-commons.org/hackathons/ai-fintech-xrp-ledger-hackathon-f78ed817?tab=resources",
+      "label": "AI & Fintech XRP Ledger Hackathon",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/README.md",
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S038",
+      "vendor": "quicknode",
+      "url": "https://mcp.quicknode.com/mcp",
+      "label": "Quicknode remote MCP endpoint",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S039",
+      "vendor": "xrpl",
+      "url": "https://mcp.xrpledger.ai",
+      "label": "XRPL ecosystem MCP endpoint",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S040",
+      "vendor": "aws",
+      "url": "https://strandsagents.com/docs/integrations/plugins/agentcore-tool-search/",
+      "label": "Plugin guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S041",
+      "vendor": "aws",
+      "url": "https://strandsagents.com/docs/user-guide/box/",
+      "label": "Box overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/aws.md"
+      ]
+    },
+    {
+      "id": "S042",
+      "vendor": "mastercard",
+      "url": "https://www.mastercard.com/global/en/news-and-trends/press/2026/june/mastercard-launches-agent-pay-for-machines.html",
+      "label": "announcement",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S043",
+      "vendor": "mastercard",
+      "url": "https://www.mastercard.com/us/en/business/artificial-intelligence/mastercard-agent-pay.html",
+      "label": "Agent Pay",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md"
+      ]
+    },
+    {
+      "id": "S044",
+      "vendor": "mastercard",
+      "url": "https://www.mastercard.com/us/en/business/artificial-intelligence/mastercard-agent-pay/agent-pay-for-machines.html",
+      "label": "AP4M",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/mastercard.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S045",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/build-with-ai/quicknode-mcp",
+      "label": "Quicknode MCP",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/agent-hooks.md",
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S046",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/llms.txt",
+      "label": "Quicknode LLM documentation index",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S047",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/streams",
+      "label": "Overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S048",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/streams/rest-api",
+      "label": "Streams API",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S049",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/streams/supported-chains",
+      "label": "Supported chains",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S050",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/webhooks",
+      "label": "Webhooks overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S051",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/webhooks/rest-api/getting-started",
+      "label": "REST overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S052",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/webhooks/rest-api/webhooks/webhooks-rest-create-from-template",
+      "label": "template endpoint",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S053",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl",
+      "label": "XRPL overview",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S054",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/account_info",
+      "label": "account_info",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S055",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/api-overview",
+      "label": "Network/API coverage",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S056",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/endpoint-security",
+      "label": "security",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S057",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/quickstart",
+      "label": "Quickstart",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S058",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/submit",
+      "label": "submit",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S059",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/subscribe",
+      "label": "subscribe",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S060",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrpl/tx",
+      "label": "Quicknode tx page",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S061",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/docs/xrplevm",
+      "label": "XRPL EVM RPC",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S062",
+      "vendor": "quicknode",
+      "url": "https://www.quicknode.com/guides/quicknode-products/streams/validating-incoming-streams-webhook-messages",
+      "label": "Signature guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S063",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/docs/agents/agentic-payments-x402",
+      "label": "native XRPL x402 guide",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/architecture.md",
+        "docs/partners/open-questions.md"
+      ]
+    },
+    {
+      "id": "S064",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/docs/concepts/transactions/finality-of-results",
+      "label": "finality",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/architecture.md",
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S065",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/docs/references/http-websocket-apis/public-api-methods",
+      "label": "XRPL method reference",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S066",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/docs/references/http-websocket-apis/public-api-methods/transaction-methods/tx",
+      "label": "tx lookup",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/architecture.md",
+        "docs/partners/open-questions.md",
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S067",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/docs/references/protocol/transactions/transaction-results",
+      "label": "transaction results",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/architecture.md",
+        "docs/partners/quicknode.md"
+      ]
+    },
+    {
+      "id": "S068",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/docs/references/protocol/transactions/types/payment",
+      "label": "Payment fields and flags",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/architecture.md",
+        "docs/partners/ledger.md"
+      ]
+    },
+    {
+      "id": "S069",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/mcp",
+      "label": "XRPL documentation MCP endpoint",
+      "status": "discovered_only",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "URL recorded from documentation; full resource/server schema not retrieved or connected.",
+      "referenced_by": []
+    },
+    {
+      "id": "S070",
+      "vendor": "xrpl",
+      "url": "https://xrpl.org/resources/dev-tools/ai-tools",
+      "label": "official AI tooling page",
+      "status": "read",
+      "checked_on": "2026-10-24",
+      "method": "computer-use browser",
+      "note": "Official documentation or source inspected; synthesis in linked project guides.",
+      "referenced_by": [
+        "docs/partners/agent-hooks.md"
+      ]
+    }
+  ]
+}

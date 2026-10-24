@@ -33,3 +33,14 @@ every transaction prints a link to https://testnet.xrpl.org.
 - [agentic payments with x402 on XRPL](https://xrpl.org/docs/agents/agentic-payments-x402)
 - [XRPL AI tools](https://xrpl.org/resources/dev-tools/ai-tools)
 - [testnet faucet](https://xrpl.org/resources/dev-tools/xrp-faucets)
+
+## partner documentation and coding-agent context
+
+The [partner documentation pack](docs/partners/README.md) covers Ledger, Quicknode, Mastercard and AWS, researched through official documentation on October 24, 2026. It includes API contracts, authentication, integration architecture, source provenance, and explicit access/schema gaps.
+
+```bash
+python3 scripts/partner_context.py --list
+python3 scripts/partner_context.py ledger architecture
+```
+
+[Agent hooks](docs/partners/agent-hooks.md) explain the offline loader, project-local skill and optional documentation MCP connections. Existing MCP configuration and payment code are unchanged. Partner integrations are documented proposals unless explicitly marked otherwise.
