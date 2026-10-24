@@ -4,6 +4,18 @@ built at the AI & Fintech XRPL Hackathon, New York, Oct 24–25 2026.
 
 > disposable, budget-exact wallets for AI agents: one plain-English sentence, locked by the ledger (2-of-2, no master key), vendors checked against on-chain credentials, burned at the end into an accounting export. See `docs/PROJECT.md`.
 
+## React wallet screen
+
+The Figma home and wallet activity screens are implemented in [`frontend/`](frontend/README.md), with mock balances, spending rules, and transaction history.
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+This frontend uses local demo data; it is not connected to the Python payment flows yet.
+
 ## quickstart (5 minutes)
 
 ```bash

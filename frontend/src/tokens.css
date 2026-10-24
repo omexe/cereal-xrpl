@@ -1,0 +1,52 @@
+/* Canonical visual hierarchy. Components use semantic tokens, never local scales. */
+:root {
+  --family-ui: Aspekta, sans-serif;
+  --family-display: Aspekta, sans-serif;
+  --font-caption: 400 12px/1.5 var(--family-ui);
+  --font-ui: 400 13px/1.5 var(--family-ui);
+  --font-label: 500 12px/1.5 var(--family-ui);
+  --font-control: 500 13px/1.5 var(--family-ui);
+  --font-body: 400 14px/1.5 var(--family-ui);
+  --font-brand: 500 12px/1.5 var(--family-ui);
+  --font-title: 500 20px/1.25 var(--family-display);
+  --font-rules: 500 36px/1.15 var(--family-display);
+  --tracking-rules: -.54px;
+  --font-transaction: 500 16px/1.3 var(--family-ui);
+  --font-policy: 500 24px/1.3 var(--family-display);
+  --font-overview: 500 72px/1.05 var(--family-display);
+  --font-composer: 500 18px/1.5 var(--family-ui);
+  --tracking-overview: -2.16px;
+  --font-display: 500 48px/1.05 var(--family-display);
+  --tracking-display: -1.44px;
+  --tracking-policy: -.36px;
+
+  --icon-inline: 16px;
+  --icon-control: 18px;
+  --icon-prominent: 20px;
+  --icon-stroke: 1.75;
+
+  --color-text-primary: #20232b;
+  --color-text-secondary: #525866;
+  --color-text-muted: #6b7280;
+  --color-text-on-accent: #ffffff;
+  --color-accent: #2b33d8;
+  --color-accent-soft: #d3d6f7;
+  --color-organism-soft: #d3d1ff;
+  --color-organism-selected: #332bff;
+  --color-surface: #ffffff;
+  --color-surface-subtle: #f8f8fa;
+  --color-surface-hover: #eeeef3;
+  --color-border: #e3e5eb;
+  --color-marker-active: #4ac900;
+  --color-marker-inactive: #a5a9b3;
+  --color-error: #a32626;
+  --color-overlay: #10102b30;
+  --color-shadow: #14143a22;
+  --color-chart-1: #6570b3;
+  --color-chart-2: #8ea8d8;
+  --color-chart-3: #dbe5ff;
+}
+
+@media (max-width: 760px) {
+  :root { --font-rules: 500 24px/1.3 var(--family-display); --tracking-rules: -.36px; --font-overview: 500 40px/1.05 var(--family-display); --tracking-overview: -1.2px; --font-composer: var(--font-body); --font-display: 500 40px/1.05 var(--family-display); --tracking-display: -1.2px; }
+}
