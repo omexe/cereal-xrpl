@@ -1,0 +1,18 @@
+# Developer-experience feedback collected while building cereal (Oct 24–25 2026)
+
+Ledger scores "DX feedback as much as the code"; Ripple runs the DevEx hook and gave a feedback award in Rome. Keep this file factual: what we tried, what happened, link or hash.
+
+## XRPL / rippled / xrpl-py
+1. **Batch (XLS-56) outer `tesSUCCESS` with all inner transactions rolled back, and no inner results in the transaction metadata.** A burner-signed `Batch` (tfAllOrNothing) of TrustSet → SignerListSet → AccountSet(asfDisableMaster), inner `Sequence` = outer + 1..3, `Fee` "0", `SigningPubKey` "", returned `tesSUCCESS` for the outer transaction (testnet tx `887475D257E673E6E454E6F0A4A6EF37FA99F966E5FA5D34ADD0078F173EA7F7`) while the account was left unchanged (master enabled, no signer list, no trust line). The only affected node is the outer AccountRoot; nothing in `meta` says which inner transaction failed or why. Sent sequentially, the same three transactions succeed (`03616E0A…`, `A512CC1D…`, `B22CE98F…`). Ask: surface inner results (or at least the first failing inner result) in Batch metadata, and document whether `AccountSet` flags are allowed as inner transactions.
+2. **xrpl-py `submit_and_wait` waits for `LastLedgerSequence` to pass before raising on a `tef` result.** A `tefNOT_MULTI_SIGNING` / `tefBAD_QUORUM` submission blocked for ~5 minutes (our LLS window) and then raised "The latest validated ledger sequence … is greater than LastLedgerSequence … Prelim result: tef…". A preliminary `tef`/`tem`/`tel` cannot become validated; returning immediately would save every integrator the wait. We now call `submit()` and poll `tx` ourselves.
+3. **xrpl-py 5.2 docs vs code:** `Memo` and other nested models have `to_dict()` but no `to_xrpl()`; the signer reference for `LedgerEntry(credential=…)` needs the nested `Credential` model, which is not obvious from the request docs.
+4. **Testnet `feature` RPC reports `Escrow` and `PayChan` as disabled** although they work (re-genesis quirk); it confuses preflight scripts.
+
+## Ledger
+1. **Signer reference out of date:** `signTransaction` is documented as returning `{ r, s, v }`; `@ledgerhq/device-signer-kit-xrp` 0.3.0 returns a DER `Uint8Array` and accepts a `curve` option. The derivation-path examples mix `44'/144'/0'/0/0` and `m/44'/0'/0'/0/0`.
+2. **Nothing on the portal says the device adds the signing prefix itself, or how to multi-sign.** Both are only in the app-xrp README (empty top-level `SigningPubKey` → multisign prefix + the device's own AccountID appended; parallel multisign only). We needed the device-app source to confirm it. A `multisign` helper (or a documented recipe) in the signer kit would have saved hours.
+3. **Blind-signing requirements are undocumented on the portal:** Credentials (XLS-70), Batch, DelegateSet, PermissionedDomains and MPT are not in the device app's supported list and fail with "This transaction cannot be clear-signed" unless blind signing is enabled.
+4. Speculos: the workshop's button automation works for Nano S Plus/X only; the approval screen text for a multisig transaction differs from a single-signed one (we scroll until "Sign transaction").
+
+## t54 / x402
+- (fill in after step 6) whether the facilitator accepts a multi-signed Payment blob from a SignerList account on `xrpl:1`.

@@ -9,15 +9,16 @@ import hashlib
 import hmac
 import json
 import re
+import time
 from decimal import Decimal
 from typing import Any, Iterable
 
 from xrpl.clients import JsonRpcClient
 from xrpl.models.amounts import IssuedCurrencyAmount
-from xrpl.models.requests import AccountInfo, AccountLines, AccountObjects, AccountTx, Ledger
+from xrpl.models.requests import AccountInfo, AccountLines, AccountObjects, AccountTx, Ledger, Tx
 from xrpl.models.transactions import Memo
 from xrpl.models.transactions.transaction import Transaction
-from xrpl.transaction import XRPLReliableSubmissionException, autofill, multisign, sign, submit_and_wait
+from xrpl.transaction import autofill, multisign, sign, submit
 from xrpl.utils import hex_to_str, str_to_hex
 from xrpl.wallet import Wallet
 
@@ -90,16 +91,32 @@ def prepare(tx: Transaction, c: JsonRpcClient, *, signers_count: int | None = No
 
 
 def submit_capture(signed: Transaction, c: JsonRpcClient, *, fail_hard: bool = False) -> dict:
-    """Submit and wait. Returns {'ok', 'result', 'hash', 'explorer'}; refusals come back as results."""
-    try:
-        r = submit_and_wait(signed, c, autofill=False, check_fee=False, fail_hard=fail_hard).result
-        result = r.get("meta", {}).get("TransactionResult", r.get("engine_result", "?"))
-        return {"ok": result == "tesSUCCESS", "result": result, "hash": r.get("hash"),
-                "explorer": explorer(r["hash"]) if r.get("hash") else None, "validated": r.get("validated", False)}
-    except XRPLReliableSubmissionException as e:
-        m = RESULT_RE.search(str(e))
-        return {"ok": False, "result": m.group(1) if m else "failed", "hash": None, "explorer": None,
-                "validated": False, "error": str(e)}
+    """Submit; return refusals immediately; wait for validation only when the result can still validate.
+
+    xrpl-py's submit_and_wait keeps polling a tef/tem/tel refusal until LastLedgerSequence passes (minutes).
+    A refusal on stage must be instant, so we submit first and read the preliminary engine_result ourselves.
+    Returns {'ok', 'result', 'hash', 'explorer', 'validated'}.
+    """
+    prelim = submit(signed, c, fail_hard=fail_hard).result
+    code = prelim.get("engine_result", "?")
+    tx_hash = (prelim.get("tx_json") or {}).get("hash")
+    if code[:3] in ("tef", "tem", "tel") or (code.startswith("ter") and code != "terQUEUED"):
+        return {"ok": False, "result": code, "hash": None, "explorer": None, "validated": False,
+                "message": prelim.get("engine_result_message")}
+    deadline = int(signed.to_dict().get("last_ledger_sequence") or 0)
+    while True:
+        try:
+            r = c.request(Tx(transaction=tx_hash)).result
+            if r.get("validated"):
+                result = r.get("meta", {}).get("TransactionResult", code)
+                return {"ok": result == "tesSUCCESS", "result": result, "hash": tx_hash,
+                        "explorer": explorer(tx_hash), "validated": True}
+        except Exception:
+            pass  # not yet known to this node
+        if deadline and ledger_index(c) > deadline:
+            return {"ok": False, "result": code, "hash": tx_hash, "explorer": explorer(tx_hash),
+                    "validated": False, "message": "expired before validation (LastLedgerSequence passed)"}
+        time.sleep(1.0)
 
 
 def sign_submit(tx: Transaction, w: Wallet, c: JsonRpcClient, **kw: Any) -> dict:
