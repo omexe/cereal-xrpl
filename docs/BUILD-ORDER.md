@@ -32,11 +32,19 @@ Do now: `python3 -m venv .venv && . .venv/bin/activate && pip install -r require
 
 Acceptance: every role resolves on `account_info` with a balance.
 
-## 1. The lock (h0–h1) — hash #1
+## 1. The lock (h0–h1) — hashes #1a–c  ✅ verified on testnet
 
-`cereal/lock.py`: a burner-signed `Batch` (`flags=TF_ALL_OR_NOTHING`; each inner tx carries `TF_INNER_BATCH_TXN`, `fee="0"`, `signing_pub_key=""`): `TrustSet` RLUSD (limit = budget) → `SignerListSet` (`signer_quorum=2`, entries AGENT weight 1, CEREAL_COSIGN weight 1) → `AccountSet` (`set_flag=ASF_DISABLE_MASTER`). That order: the master can only be disabled once a signer list exists. The burner's master key signs this one transaction, then the seed is dropped from memory (and from `.env` once the pool is locked).
+`cereal/lock.py` sends, in order: `TrustSet` RLUSD (limit = budget) → `SignerListSet` (quorum 2; AGENT weight 1, CEREAL_COSIGN weight 1, and the owner's Ledger weight 2 when `LEDGER_ADDRESS` is set) → `AccountSet` (asfDisableMaster). The master can only be disabled once a signer list exists, hence the order. The burner's master key signs these three transactions and is then dropped.
 
-Acceptance: `account_info` shows `lsfDisableMaster`; `account_objects(type="signer_list")` shows quorum 2. If xrpl-py or rippled rejects `AccountSet` as an inner transaction, send the three sequentially and keep moving.
+Verified Oct 24 on BURNER_1: `03616E0A99…`, `A512CC1D7B…`, `B22CE98F11…` → `is_locked()` = master disabled, quorum 2, signers {cereal 1, Ledger 2, agent 1}. The single-`Batch` form (`lock_burner(..., sequential=False)`) returned `tesSUCCESS` for the outer transaction with all three inner transactions rolled back (`887475D2…`), so sequential is the default and the Batch is only an attempt that falls back on the state check (logged in `docs/DX-FEEDBACK.md`).
+
+Acceptance: `python -m cereal.preflight` shows `locked=True` for the burner.
+
+## 2b. The recovery key (h1–h2) — the Ledger alone sweeps and burns
+
+`ledger/multisign.ts`: the device signs a transaction as ONE multisig signer (empty `SigningPubKey`, no `Signers`; the XRP app applies the multisign prefix and appends its own AccountID). `npm run address` prints the device account (put it in `.env` as `LEDGER_ADDRESS` before locking burners); `npm run sweep -- <burner> <treasury> <xrp>` has the device alone move funds out of a locked burner (weight 2 meets the quorum). Clear-signed: Payment, TrustSet, AccountDelete. This is the "if cereal disappears, your Ledger takes your money back" beat and Ledger's "multisig treasuries" gap.
+
+Acceptance: a device-only sweep from a locked burner lands `tesSUCCESS`; the agent alone on the same burner gets `tefBAD_QUORUM`.
 
 ## 2. The funding, on the device (h1–h2) — hash #2
 
@@ -83,7 +91,7 @@ Acceptance: the 90 seconds runs end to end once, sentence to export, by Sat 22:0
 
 ## 8. The burn and the export (Sun 06:00–09:00) — hashes #5–#7
 
-`cereal/burn.py`, all multi-signed by AGENT + CEREAL_COSIGN: `Payment` remaining RLUSD → TREASURY (hash #5) → `TrustSet` limit 0 (hash #6; the line deletes at zero balance, zero limit, no flags) → `AccountDelete(destination=TREASURY)` with `fail_hard=True` (hash #7; fee = owner reserve increment). Use a burner from step 0 so it is old enough. `cereal/export.py`: `account_tx` for every burner with cereal's SourceTag, decode memo tags via cereal's mapping, write CSV (date, vendor, amount, hash, team, project, task, sentence).
+`cereal/burn.py`, multi-signed by AGENT + CEREAL_COSIGN (or by the owner's Ledger alone, weight 2, for the recovery story): `Payment` remaining RLUSD → TREASURY (hash #5) → `TrustSet` limit 0 (hash #6; the line deletes at zero balance, zero limit, no flags) → `AccountDelete(destination=TREASURY)` with `fail_hard=True` (hash #7; fee = owner reserve increment). Use a burner from step 0 so it is old enough. `cereal/export.py`: `account_tx` for every burner with cereal's SourceTag, decode memo tags via cereal's mapping, write CSV (date, vendor, amount, hash, team, project, task, sentence).
 
 Acceptance: the burner no longer resolves on the explorer; TREASURY balance rose; the CSV opens.
 
@@ -93,10 +101,10 @@ README: live URL in line one, the primitives table with XLS numbers, explorer ha
 
 ## Risks and the honest line
 
-- *Co-signer in the loop:* 2-of-2, non-custodial; the lock is on-ledger; a dead cereal freezes the agent, a compromised cereal cannot spend. Say it unprompted.
+- *Co-signer in the loop:* 2-of-2, non-custodial; the lock is on-ledger; a dead cereal freezes the agent, a compromised cereal cannot spend, and the owner's Ledger (weight 2) can always sweep without cereal. Say it unprompted.
 - *Vendor class and expiry are co-signer rules, not ledger rules:* true; the budget and the two-key lock are ledger rules. Payment channels from a burner are the v2 answer for high-frequency vendors.
 - *RLUSD testnet friction* (destination tag, faucet): fall back to an own IOU and say so.
-- *Batch inner `AccountSet`:* unverified; sequential fallback costs nothing. xrpl-py 5.x ships Batch; check `xrpl.transaction` for the batch signing helpers before hand-rolling.
+- *Batch inner transactions:* on testnet the Batch applied only its outer transaction (inner three rolled back, no inner results in metadata); sequential is the default. Say "three transactions, twelve seconds" and claim Batch only if you demo it working.
 - *Facilitator and multi-signed blobs:* unverified; direct submit fallback.
 - *AccountDelete age:* burners created in step 0; keep two spares.
 - Claim Batch, multi-sign, Credentials, AccountDelete, Memos/SourceTag, RLUSD, x402, device signing. Do not claim delegation or channels.
