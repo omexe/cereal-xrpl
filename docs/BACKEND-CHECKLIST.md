@@ -29,7 +29,7 @@ These checkmarks reflect implementation and recorded acceptance in [BUILD-ORDER.
 
 - [x] S01 — Install the Python environment and backend dependencies. Owner: Codex · Completed 2026-10-24. Created gitignored `.venv` with Python 3.12.0 and installed `requirements.txt`; dependency/import checks pass and the service OpenAPI schema generates successfully (21 paths). See evidence below.
 - [ ] S02 — Verify local testnet configuration without exposing secrets. **Done when:** required roles, testnet RPC, issuer, caps, vendor endpoints, and chosen signing mode are configured and documented by variable name only.
-- [x] S03 — Run the offline backend suite and record the result. Owner: Codex · Completed 2026-10-24 during S01 verification. All 73 offline tests pass with `.env` loading disabled. Fixed a test that loaded a real treasury key and excluded live-test modules before import unless explicitly opted in. Live acceptance remains unrun.
+- [x] S03 — Run the offline backend suite and record the result. Owner: Codex · Completed 2026-10-24 during S01 verification. All 84 offline tests pass with `.env` loading disabled. Fixed a test that loaded a real treasury key and excluded live-test modules before import unless explicitly opted in. Live acceptance remains unrun.
 - [ ] S04 — Document service startup and distinct UI ports. **Done when:** backend, vendor services, React app, and optional projector dashboard can run together; the two UIs no longer compete for port 5173.
 
 ## 2. Define and connect the application contract
@@ -89,6 +89,7 @@ Append completed verification here, using task IDs. Do not record an old accepta
 | 2026-10-24 | S01 | `.venv/bin/python -m pip install -r requirements.txt`; `.venv/bin/python -m pip check` → no broken requirements. Imported all eight direct dependencies plus service/main-agent/subagent; generated OpenAPI for 21 paths. | Local `.venv` (gitignored); no backend configuration changes. |
 | 2026-10-24 | S01, S03 | `PYTHON_DOTENV_DISABLED=1 CEREAL_RUN_TESTNET=0 make test` → **73 passed in 0.52s**. | `tests/conftest.py`, `tests/test_part3.py`. |
 | 2026-10-24 | S03 | Isolated collection smoke checks: default excludes a synthetic live-test module; `--run-testnet` and `CEREAL_RUN_TESTNET=1` both include it. Collection only; no live tests executed. | Temporary test harness; no payment or ledger calls. |
+| 2026-10-24 | S03 | After integrating upstream chat, sweeper, and LLM changes: `PYTHON_DOTENV_DISABLED=1 CEREAL_RUN_TESTNET=0 make test` → **84 passed in 0.56s**. | Includes upstream `5bf6216`; no live tests executed. |
 
 ### Installed environment for S01
 
