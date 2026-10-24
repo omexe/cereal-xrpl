@@ -166,8 +166,9 @@ async function main() {
     }
   }
 
-  if (!channelId) {
-    // Reuse an existing open channel whose cap <= requested --cap (or exact match) and has not expired
+  if (!channelId && !job) {
+    // Standalone runs only: reuse an open channel with exactly this cap. A cereal subagent (--job) always gets its
+    // own Channel so two subagents' budgets never share one cap.
     for (const candidate of openChannels) {
       if (candidate.channel_status !== 'open') continue;
       if (BigInt(candidate.cap_wei) === capWei) {
@@ -305,7 +306,10 @@ async function main() {
     settlement_tx: settled.settlement_tx ?? null,
     payout_tx: settled.payout_tx ?? null,
     receipt_id: receiptUrl || purchase.claimId,
-    merchant_payout_delta: ethers.formatUnits(payoutDeltaWei > 0n ? payoutDeltaWei : ethers.parseUnits(String(settled.amount_rlusd || amountStr), 18), 18),
+    // Measured on-chain balance change of the payout wallet (0 if the payout had not landed when we read it);
+    // the service's own settled amount is reported separately, never substituted for the measurement.
+    merchant_payout_delta: ethers.formatUnits(payoutDeltaWei, 18),
+    settled_amount: settled.amount_rlusd ?? null,
     explorer: `${explorerBase}/tx/${purchase.transactionHash}`,
     job: job || null,
     tag: tag || null,

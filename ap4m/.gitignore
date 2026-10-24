@@ -6,3 +6,5 @@ merchant-state/
 *.sqlite-shm
 *.sqlite-wal
 *.lock
+merchant-state*/
+agent-state*/

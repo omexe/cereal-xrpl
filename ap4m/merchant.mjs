@@ -23,23 +23,14 @@ const DEFAULT_MERCHANT_ID = '0xc01be948b7eae6994cbef40dea79f5a2ef8af335e53772bb9
 const DEFAULT_MERCHANT_PAYOUT = '0x4a7e1cf40ea929ff5bec4d76b060506f3fe59c44';
 
 export const SWELL_AGENDA_RESOURCE = {
-  dataset: 'ripple-swell-2026-agenda',
+  dataset: 'swell-nyc-hackathon-sample-agenda',
+  note: 'Sample data for the demo, not an official agenda; no real speakers are listed.',
   vendor: 'Cereal Data Vendor (AP4M)',
   rail: 'ap4m',
   network: 'eip155:1449000',
   sessions: [
-    {
-      id: 'swell-01',
-      title: 'Agentic Commerce & Programmable Settlement on XRPL and RLUSD',
-      speakers: ['Monica Long', 'Jorn Lambert', 'Christian Rau'],
-      startsAt: '2026-10-25T13:00:00Z',
-    },
-    {
-      id: 'swell-02',
-      title: 'Know Your Agent & Know Your Vendor: On-Ledger Credentials and Vouchers',
-      speakers: ['David Schwartz', 'Amol Sharma'],
-      startsAt: '2026-10-25T14:30:00Z',
-    },
+    { id: 'sample-01', title: 'Agent wallets with budget-exact limits', startsAt: '2026-10-25T13:00:00Z' },
+    { id: 'sample-02', title: 'Vendor credentials and vouchers for agents', startsAt: '2026-10-25T14:30:00Z' },
   ],
 };
 
