@@ -1,8 +1,8 @@
 """Idempotent ledger setup for the demo. Safe to rerun; never prints seeds.
 
-  1. RLUSD trust lines on TREASURY, VENDOR_A, VENDOR_B
+  1. RLUSD trust lines on TREASURY, VENDOR_A, VENDOR_B, VENDOR_C
   2. testnet RLUSD for TREASURY from the RippleX faucet (tryrlusd.com, 10 RLUSD per claim, rate-limited)
-  3. vendor credentials: issue to A and B, accept by both, then revoke B with a reason memo
+  3. vendor credentials: issue to A, B and C, accept by all three, then revoke B with a reason memo
   4. the owner's Ledger (LEDGER_ADDRESS) as a signer on TREASURY (quorum 1; master kept as the software fallback)
 
 Usage: python scripts/setup_demo_state.py [--claims N] [--skip-faucet] [--skip-revoke]
@@ -41,7 +41,7 @@ def main() -> None:
     c = client()
 
     print("1. trust lines")
-    for role in ("TREASURY", "VENDOR_A", "VENDOR_B"):
+    for role in ("TREASURY", "VENDOR_A", "VENDOR_B", "VENDOR_C"):
         addr = config.address(role)
         if has_rlusd_line(c, addr):
             print(f"   {role:9s} already has an RLUSD line")
@@ -66,7 +66,7 @@ def main() -> None:
 
     print("3. vendor credentials")
     issuer = config.wallet("CREDENTIAL_ISSUER")
-    for role in ("VENDOR_A", "VENDOR_B"):
+    for role in ("VENDOR_A", "VENDOR_B", "VENDOR_C"):
         addr = config.address(role)
         st = vendors.check(c, addr)
         if st["status"] in ("valid",):
@@ -84,7 +84,7 @@ def main() -> None:
         r = vendors.revoke(issuer, config.address("VENDOR_B"), c, reason="overcharge",
                            report_hash="customer-report:invoice-0042")
         print(f"   VENDOR_B CredentialDelete {r['result']} {r.get('hash')}")
-    for role in ("VENDOR_A", "VENDOR_B"):
+    for role in ("VENDOR_A", "VENDOR_B", "VENDOR_C"):
         st = vendors.check(c, config.address(role))
         print(f"   {role}: {st['status']}" + (f"  evidence {st['revocation']['hash']}" if st.get("revocation") else ""))
 

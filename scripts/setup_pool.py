@@ -1,6 +1,6 @@
 """Create or load cereal's testnet roles and write them to .env. Never prints seeds.
 
-Roles: TREASURY, AGENT, CEREAL_COSIGN, BURNER_1..3, VENDOR_A, VENDOR_B, CREDENTIAL_ISSUER.
+Roles: TREASURY, AGENT, CEREAL_COSIGN, BURNER_1..3, VENDOR_A, VENDOR_B, VENDOR_C, CREDENTIAL_ISSUER.
 Existing <ROLE>_SEED values in .env are kept; missing ones are faucet-funded.
 Also writes <ROLE>_ADDRESS and the XRPL_BUYER_SEED / XRPL_PAY_TO keys the x402 scripts expect.
 Run early: burners must be >=256 ledgers old before AccountDelete works.
@@ -12,7 +12,7 @@ from xrpl.clients import JsonRpcClient
 from xrpl.wallet import Wallet, generate_faucet_wallet
 
 ROLES = ["TREASURY", "AGENT", "CEREAL_COSIGN", "BURNER_1", "BURNER_2", "BURNER_3",
-         "VENDOR_A", "VENDOR_B", "CREDENTIAL_ISSUER"]
+         "VENDOR_A", "VENDOR_B", "VENDOR_C", "CREDENTIAL_ISSUER"]
 ROOT = Path(__file__).resolve().parents[1]
 ENV, EXAMPLE = ROOT / ".env", ROOT / ".env.example"
 

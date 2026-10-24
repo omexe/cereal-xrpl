@@ -1,5 +1,5 @@
 PY=.venv/bin/python
-.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 rails vendor-b ap4m-merchant retire export ledger-check
+.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 rails vendor-b vendor-c ap4m-merchant retire export ledger-check
 setup:        ## venv + deps
 	python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 pool:         ## create/load roles → .env (run early: burners must age 256 ledgers)
@@ -9,10 +9,12 @@ preflight:    ## roles, balances, lock state, burn eligibility, vendor credentia
 service:      ## the cereal service on :8001 (deploy, cosign, reclaim, retire)
 	.venv/bin/uvicorn cereal.service:app --port 8001
 cosign: service
-vendor:       ## vendor A's x402 paywall on :8000 (RLUSD per request, settled by the t54 facilitator)
-	$(PY) x402/server.py
-vendor-b:     ## vendor B's x402 paywall on :8002 (vendor B is revoked: cereal refuses before paying)
-	X402_PORT=8002 XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_B"))') $(PY) x402/server.py
+vendor:       ## vendor A's paywall on :8000 (trusted): agenda 0.25, speakers 0.25 RLUSD
+	X402_VENDOR="Vendor A" X402_ITEMS="agenda:0.25,speakers:0.25" $(PY) x402/server.py
+vendor-b:     ## vendor B's paywall on :8002 (revoked, cheapest: the trap): agenda 0.05, speakers 0.05
+	X402_PORT=8002 X402_VENDOR="Vendor B" X402_ITEMS="agenda:0.05,speakers:0.05" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_B"))') $(PY) x402/server.py
+vendor-c:     ## vendor C's paywall on :8003 (trusted): agenda 0.15, speakers 0.30
+	X402_PORT=8003 X402_VENDOR="Vendor C" X402_ITEMS="agenda:0.15,speakers:0.30" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_C"))') $(PY) x402/server.py
 ap4m-merchant: ## the AP4M merchant on :4308 (XRPL EVM testnet; redeems vouchers, settles RLUSD to the payout wallet)
 	cd ap4m && node merchant.mjs --port 4308 --price 0.25
 test:         ## unit tests (no network)
