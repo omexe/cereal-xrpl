@@ -243,7 +243,13 @@ def main() -> None:
             "done": ({"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}, s.done),
         }
         if a.buy:
-            system += f" Resources to buy over x402 with buy(): {a.buy}. Pay only if the price fits budget_left()."
+            options = []
+            for n, spec in enumerate(a.buy, 1):
+                alts = [alt.partition("@") for alt in spec.split("|")]
+                options.append(f"purchase {n}: try in this order, stop at the first that succeeds: " + "; ".join(
+                    f"buy(url='{u}'" + (f", max_rlusd='{cap}')" if cap else ")") for u, _, cap in alts))
+            system += (" Buy these over x402 with buy(): " + " | ".join(options) +
+                       ". Never pay more than the max shown. If cereal refuses, report the refusal; don't retry it.")
         if a.ap4m:
             system += f" Resources to buy from Mastercard AP4M merchants with buy_ap4m(): {a.ap4m}."
         llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)

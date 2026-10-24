@@ -60,27 +60,28 @@ def parse_fallback(sentence: str) -> dict:
 
 
 def parse_with_claude(sentence: str, known_names: list[str]) -> dict | None:
-    import anthropic
-    from .llm import MODEL
-    tool = {"name": "wallet_card", "description": "The limits of one disposable agent wallet, read from the sentence.",
-            "input_schema": {"type": "object", "properties": {
-                "name": {"type": "string"}, "budget": {"type": "string", "description": "RLUSD amount, digits only"},
-                "expires_in_hours": {"type": "number"},
-                "vendor_names": {"type": "array", "items": {"type": "string"}},
-                "approval_threshold": {"type": "string", "description": "RLUSD; payments above it need the owner"},
-                "sweep_when_done": {"type": "boolean"}}, "required": ["budget"]}}
-    try:
-        resp = anthropic.Anthropic().messages.create(
-            model=MODEL, max_tokens=400, tools=[tool], tool_choice={"type": "tool", "name": "wallet_card"},
-            system=("Read one plain-English instruction for a disposable agent wallet. Never invent a budget, "
-                    "vendor or threshold that the sentence does not state. Known vendors: " + ", ".join(known_names)),
-            messages=[{"role": "user", "content": sentence}])
-        for b in resp.content:
-            if getattr(b, "type", "") == "tool_use":
-                return {**b.input, "parsed_by": MODEL}
-    except Exception:
+    """The model reads the sentence into the card's fields (OpenRouter first, then the Anthropic API). It never invents
+    a value the sentence doesn't state; unknown fields come back null and cereal applies stated defaults."""
+    from . import llm
+    nullable = lambda t: {"type": [t, "null"]}
+    schema = {"type": "object", "additionalProperties": False,
+              "required": ["name", "budget", "expires_in_hours", "vendor_names", "approval_threshold", "sweep_when_done"],
+              "properties": {"name": nullable("string"),
+                             "budget": {"type": ["string", "null"], "description": "RLUSD (dollars), digits only"},
+                             "expires_in_hours": nullable("number"),
+                             "vendor_names": {"type": "array", "items": {"type": "string"}},
+                             "approval_threshold": {"type": ["string", "null"],
+                                                    "description": "RLUSD; payments above it need the owner's approval"},
+                             "sweep_when_done": nullable("boolean")}}
+    out = llm.extract(
+        "Read one plain-English instruction for a disposable agent wallet into its fields. Never invent a budget, "
+        "vendor, duration or threshold the sentence does not state: use null. Dollars mean RLUSD. "
+        "Known vendors: " + ", ".join(known_names), sentence, schema, "wallet_card")
+    if not out:
         return None
-    return None
+    if out.get("sweep_when_done") is None:
+        out["sweep_when_done"] = True
+    return {**out, "vendor_names": out.get("vendor_names") or [], "parsed_by": llm.served_by}
 
 
 def build_card(sentence: str, known: list[dict] | None = None) -> dict:
