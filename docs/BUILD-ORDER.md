@@ -4,7 +4,7 @@ Build one part at a time. A part is done when its acceptance checks pass on test
 
 | Part | Scope | Status |
 |---|---|---|
-| **1** | **Main agent on the main wallet deploys subagents into subwallets** | **in progress**: ledger primitives verified; factory, keys, service endpoints, agent loops to build |
+| **1** | **Main agent on the main wallet deploys subagents into subwallets** | **done**: verified on testnet Oct 24 (hashes below); retire pending account age |
 | 2 | Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats | built and verified (vendor check, revocation evidence, refusals) — wire in after Part 1 |
 | 3 | Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet | built and verified on Speculos — wire in after Part 2 |
 | 4 | Payment rails: x402 via t54 (+ Verifiable Intent) and Mastercard AP4M on XRPL EVM | not built |
@@ -51,8 +51,20 @@ Acceptance: a subagent pays an allowlisted payee (co-signed `tesSUCCESS`); the s
 
 Acceptance (the Part 1 demo): one goal → two subagents in two subwallets, deployed and funded from the main wallet, each paying twice, both reclaimed; the run prints the tree `main → subagent → subwallet → payments` with explorer links; the main wallet balance before and after reconciles to the payments.
 
-### p1.7 Part 1 tests and record
-pytest for the factory, caps and co-sign policy with a mocked client; one marked testnet test for the full tree. Paste the acceptance hashes into this file.
+### p1.7 Part 1 tests and record  ✅
+`tests/test_part1.py`: caps (per-subagent, outstanding, active count, invalid budget), co-sign refusals before any network call (unknown/inactive deployment, wrong account, payee not allowed, not RLUSD), the even planner. 11 tests pass.
+
+**Part 1 acceptance, verified on testnet Sat Oct 24:**
+| Check | Evidence |
+|---|---|
+| Service deploy (d_213c9d) | activate `5E03636C…`, lock `2C878DA1…`/`6850E243…`/`3D1F9ED0…`, fund `1625C4EA…` (43 s) |
+| Cap refusal | budget 6 > `MAX_SUBAGENT_BUDGET` 5 → `cap_exceeded`, nothing sent |
+| Subagent alone | `tefBAD_QUORUM` |
+| Payee not on the allowlist | refused by `/cosign` (`payee_not_allowed`) |
+| Reclaim | sweep `8A3ABE18…`, trust line closed `591DF5C5…`; retire too early → `too_young` (225 ledgers) |
+| `make main-agent` (goal → 2 subagents) | d_31496c: activate `7D3FC29E…`, fund `AA045F5D…`, pays `7719802A…` `DDAE7F5E…`, reclaim `2B003D75…` `2BE5DC58…`; d_379fdc: activate `7FB20117…`, fund `337F945F…`, pays `2387359B…` `C60F96AF…`, reclaim `44647F80…` `642C46A6…`; both proved `tefBAD_QUORUM` alone; main wallet 20.7477 → 19.7477 RLUSD = the four 0.25 payments, reconciled |
+| Retire | pending: `python -m cereal.main_agent --retire-all` once each subwallet is ≥256 ledgers old |
+
 
 ---
 

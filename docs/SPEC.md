@@ -1,6 +1,6 @@
 # cereal — technical spec (backend), by part
 
-Status Sat Oct 24 ~5:45 PM EDT. The build order is `docs/BUILD-ORDER.md`; this file holds the contracts. Build Part 1 completely before wiring anything from later parts into it.
+Status Sat Oct 24 ~7 PM EDT: Part 1 built and verified on testnet. The build order is `docs/BUILD-ORDER.md`; this file holds the contracts. Build Part 1 completely before wiring anything from later parts into it.
 
 **What it is.** A main agent connected to a company's main wallet deploys subagents. Each subagent gets its own subwallet, created and funded by the main wallet with exactly its budget and locked by the ledger so no single key can spend. Subagents pay from their own subwallet only; when they finish, the main agent reclaims what is left and the subwallet is deleted. Later parts add on-ledger vendor trust, the owner's Ledger device, x402 and Mastercard AP4M payments, and the accounting export.
 
@@ -18,11 +18,11 @@ Status Sat Oct 24 ~5:45 PM EDT. The build order is `docs/BUILD-ORDER.md`; this f
 
 ---
 
-## Part 1 — main agent → subagents → subwallets (build now)
+## Part 1 — main agent → subagents → subwallets (built and verified Oct 24; hashes in BUILD-ORDER)
 
 ### 1.1 Trust boundaries
 - The **main agent** (an LLM) can only call the service. It cannot sign anything, so a hijacked main agent can at most deploy subagents within the caps.
-- The **cereal service** holds the main-wallet key and the co-signer key. It creates and funds subwallets only through `POST /subagents` and only within caps; it co-signs only `Payment`s from its own subwallets that pass policy.
+- The **cereal service** holds the main-wallet key and the co-signer key. It creates and funds subwallets only through `POST /subagents` and only within caps; it co-signs only `Payment`s from its own subwallets that pass policy. In Part 1 it also loads a subagent's key from the local keystore to co-sign that subwallet's reclaim and retire; Part 3 replaces this with the owner's Ledger (weight 2) signing alone.
 - Each **subagent** holds one key that is a weight-1 signer on its own subwallet and nothing else. Alone it cannot move a drop (`tefBAD_QUORUM`); it can never reach the main wallet or another subwallet.
 - The **subwallet** holds exactly its budget, its trust-line limit equals its budget (it cannot even receive more), and its master key is disabled after the lock.
 
@@ -70,9 +70,9 @@ Caps (env, enforced only in the service): `MAX_SUBAGENT_BUDGET` (default 5), `MA
 
 ### 1.5 Agents
 
-**Main agent** (`python -m cereal.main_agent --goal "…" --envelope 3`): Anthropic SDK tool loop (model `claude-sonnet-5-5`; Strands/AgentCore is a Part 4 swap for the AWS bounty). Tools, each a call to the service: `main_wallet()`, `deploy_subagent(task, budget, allowed_payees)`, `list_subagents()`, `wait(subagent_id, timeout_s)`, `reclaim_subagent(id)`. It also launches each subagent process (`python -m cereal.subagent <id> "<task>"`). Its system prompt states the envelope and that it must reclaim every subagent before finishing.
+**Main agent** (`python -m cereal.main_agent --goal "…" --envelope 2 --subagents 2 [--prove-lock]`; `--retire-all` later): Anthropic SDK tool loop when `ANTHROPIC_API_KEY` is set, otherwise an even split of the envelope; (model `claude-sonnet-5-5`; Strands/AgentCore is a Part 4 swap for the AWS bounty). Tools, each a call to the service: `main_wallet()`, `deploy_subagent(task, budget, allowed_payees)`, `list_subagents()`, `wait(subagent_id, timeout_s)`, `reclaim_subagent(id)`. It also launches each subagent process (`python -m cereal.subagent <id> "<task>"`). Its system prompt states the envelope and that it must reclaim every subagent before finishing.
 
-**Subagent** (`python -m cereal.subagent <deployment_id> "<task>"`): its own process; loads only `keys/subagents/<id>.json`. Tools: `budget_left()`, `pay(payee, amount, invoice_id=None)` (builds the Payment, signs with `multisign=True`, POSTs `/cosign`), `done(summary)` (writes the summary to the deployment). In Part 1 a payment to vendor A stands in for a purchase; Part 4 replaces it with an x402 call.
+**Subagent** (`python -m cereal.subagent <deployment_id> "<task>" [--payments 2] [--amount 0.25] [--prove-lock]`): its own process; tool loop with a key, deterministic plan without; loads only `keys/subagents/<id>.json`. Tools: `budget_left()`, `pay(payee, amount, invoice_id=None)` (builds the Payment, signs with `multisign=True`, POSTs `/cosign`), `done(summary)` (writes the summary to the deployment). In Part 1 a payment to vendor A stands in for a purchase; Part 4 replaces it with an x402 call.
 
 ### 1.6 Python modules for Part 1
 
