@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "xrpl-docs": {
+      "type": "http",
+      "url": "https://mcp.xrpledger.ai"
+    },
+    "xrpl-org-docs": {
+      "type": "http",
+      "url": "https://xrpl.org/mcp"
+    }
+  }
+}

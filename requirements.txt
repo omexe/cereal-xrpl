@@ -1,0 +1,6 @@
+xrpl-py
+x402-xrpl
+fastapi
+uvicorn
+requests
+python-dotenv
