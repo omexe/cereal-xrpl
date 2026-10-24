@@ -1,5 +1,5 @@
 PY=.venv/bin/python
-.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 shop rails vendor-b vendor-c ap4m-merchant retire export ledger-check
+.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 shop vendor-test rails vendor-b vendor-c ap4m-merchant retire export ledger-check
 setup:        ## venv + deps
 	python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 pool:         ## create/load roles → .env (run early: burners must age 256 ledgers)
@@ -35,6 +35,8 @@ x402:         ## Part 4 demo: subagents buy over x402 (needs make vendor; make v
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --x402
 shop:         ## Part 5 demo: quote all vendors, skip the revoked one, buy from the cheapest trusted, budget = quote + buffer
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --shop
+vendor-test:  ## live proof of vendor lists and blacklisting: only-C wallet; pay C, A, B, unknown; blacklist C live; restore
+	$(PY) -m cereal.vendortest
 rails:        ## sidelined: x402 + Mastercard AP4M on one budget (needs the service started with CEREAL_AP4M=1)
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --x402 --ap4m
 device:       ## Part 3 demo: owner rejects a budget on the Ledger, approves two, recovers one subwallet alone
