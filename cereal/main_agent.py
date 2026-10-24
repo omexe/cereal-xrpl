@@ -64,8 +64,9 @@ class MainAgent:
                                                      cwd=str(config.ROOT))
         return {"started": deployment_id}
 
-    def wait_subagent(self, deployment_id: str, timeout_s: int = 300) -> dict:
+    def wait_subagent(self, deployment_id: str, timeout_s: int = 1200) -> dict:
         """Wait for a subagent process to finish and return its events."""
+        # AP4M purchases run one at a time and each opens a Channel, waits for finality and settles (~2-4 min).
         p = self.procs[deployment_id]
         out, _ = p.communicate(timeout=timeout_s)
         events = []
@@ -187,6 +188,8 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
     rejected: list[dict] = []
     if device_beats and not before.get("policy", {}).get("device_funding"):
         sys.exit("--device needs the Ledger configured: LEDGER_ADDRESS set and CEREAL_DEVICE_FUNDING not 0")
+    if ap4m and not before.get("policy", {}).get("ap4m", {}).get("enabled"):
+        sys.exit("--ap4m: the Mastercard rail is sidelined; start the service with CEREAL_AP4M=1 to turn it on")
     if ap4m and not before.get("policy", {}).get("ap4m", {}).get("env_file"):
         sys.exit("--ap4m needs ap4m/.env (the AP4M agent key) and ap4m/node_modules (cd ap4m && npm ci)")
     if x402 and not _up(config.X402_VENDOR_A_URL):

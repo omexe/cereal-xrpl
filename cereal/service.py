@@ -96,7 +96,7 @@ def main_wallet() -> dict:
             "active_subagents": len(deployments.active()),
             "policy": {"vendor_credentials": config.REQUIRE_VENDOR_CREDENTIAL, "issuer": config.address("CREDENTIAL_ISSUER"),
                        "device_funding": config.DEVICE_FUNDING, "ledger_recovery": config.LEDGER_RECOVERY,
-                       "device": config.LEDGER_ADDRESS, "ap4m": ap4m.available()},
+                       "device": config.LEDGER_ADDRESS, "ap4m": {"enabled": config.AP4M_ENABLED, **ap4m.available()}},
             "caps": {"MAX_SUBAGENT_BUDGET": config.MAX_SUBAGENT_BUDGET,
                      "MAX_OUTSTANDING_BUDGET": config.MAX_OUTSTANDING_BUDGET,
                      "MAX_ACTIVE_SUBAGENTS": config.MAX_ACTIVE_SUBAGENTS}}
@@ -316,7 +316,9 @@ def pay_ap4m(dep_id: str, req: Ap4mRequest) -> dict:
     refused if the price could take the subagent past its budget across both. The Channel's on-chain cap is the budget."""
     rec = deployments.get(dep_id)
     refused = None
-    if not rec or rec["status"] != "active":
+    if not config.AP4M_ENABLED:
+        refused = _refuse("ap4m_disabled", hint="the Mastercard rail is off; start the service with CEREAL_AP4M=1")
+    elif not rec or rec["status"] != "active":
         refused = _refuse("unknown_or_inactive_deployment")
     elif datetime.now(timezone.utc) >= datetime.fromisoformat(rec["expires_at"]):
         refused = _refuse("expired", expires_at=rec["expires_at"])

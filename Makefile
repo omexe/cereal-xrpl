@@ -31,7 +31,7 @@ beats:        ## Part 2 demo: revoked vendor refused with evidence, hijack stopp
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --beats
 x402:         ## Part 4 demo: subagents buy over x402 (needs make vendor; make vendor-b for the refusal)
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --x402
-rails:        ## Part 4 demo, both rails: x402 on XRPL (t54) + Mastercard AP4M on XRPL EVM, one budget per subagent
+rails:        ## sidelined: x402 + Mastercard AP4M on one budget (needs the service started with CEREAL_AP4M=1)
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --x402 --ap4m
 device:       ## Part 3 demo: owner rejects a budget on the Ledger, approves two, recovers one subwallet alone
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --device

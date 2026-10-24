@@ -16,6 +16,7 @@ def svc(tmp_path, monkeypatch):
     monkeypatch.setattr(service, "client", lambda: object())
     monkeypatch.setattr(service, "rlusd_balance", lambda c, a: Decimal("1"))
     monkeypatch.setattr(ap4m, "available", lambda: {"node_modules": True, "env_file": True})
+    monkeypatch.setattr(config, "AP4M_ENABLED", True)
     calls = []
     monkeypatch.setattr(ap4m, "pay", lambda *a, **k: calls.append(a) or {
         "ok": True, "rail": "ap4m", "amount": "0.25", "channel_id": "0xch", "redeem_tx": "0xredeem",
@@ -115,3 +116,10 @@ def test_reclaim_without_ap4m_closes_nothing(svc):
     mp.setattr(ap4m, "channel_for_job", lambda job: None)
     mp.setattr(ap4m, "close", lambda ch, **k: pytest.fail("no Channel to close"))
     assert service.close_ap4m_channel(rec["id"]) is None
+
+
+def test_the_sidelined_rail_refuses_and_pays_nothing(svc):
+    service, rec, calls, mp = svc
+    mp.setattr(config, "AP4M_ENABLED", False)
+    assert service.pay_ap4m(rec["id"], service.Ap4mRequest(resource=URL))["refused"] == "ap4m_disabled"
+    assert calls == []
