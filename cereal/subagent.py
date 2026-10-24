@@ -34,14 +34,15 @@ class Subagent:
     def budget_left(self) -> dict:
         """How much RLUSD is left in my subwallet, my allowed payees and my expiry."""
         r = self.record()
-        return {"remaining_rlusd": r.get("balance"), "allowed_payees": r["allowed_payees"], "expires_at": r["expires_at"]}
+        return {"remaining_rlusd": r.get("balance"), "allowed_payees": r["allowed_payees"], "expires_at": r["expires_at"],
+                "approval_threshold": r.get("approval_threshold")}  # above it, the owner's Ledger must approve
 
     def pay(self, payee: str, amount: str, invoice_id: str | None = None) -> dict:
         """Pay a payee from my subwallet in RLUSD. I sign; cereal checks policy and co-signs."""
         r = self.record()
         tx = build_payment(r["subwallet"], payee, str(amount), self.dep_id, r["tag"], invoice_id)
         return request_cosign(self.dep_id, agent_sign(tx, self.key, self.c),
-                              url=f"{config.SERVICE_URL}/cosign", deployment=True)
+                              url=f"{config.SERVICE_URL}/cosign", deployment=True, timeout=900)
 
     def buy(self, url: str, max_rlusd: str | None = None) -> dict:
         """Get a resource behind an x402 paywall. On a 402 I pay its exact RLUSD price from my subwallet (cereal checks
@@ -60,7 +61,7 @@ class Subagent:
             return {"ok": False, "refused": "price_above_limit", "price": str(req.amount), "limit": str(max_rlusd)}
         r = self.record()
         tx = build_x402_payment(r["subwallet"], req, self.dep_id, r["tag"])
-        co = requests.post(f"{config.SERVICE_URL}/cosign", timeout=90, json={
+        co = requests.post(f"{config.SERVICE_URL}/cosign", timeout=900, json={  # may wait for the owner's Ledger
             "deployment_id": self.dep_id, "tx": agent_sign(tx, self.key, self.c).to_xrpl(), "present": True,
             "resource": url}).json()
         if not co.get("ok"):

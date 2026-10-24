@@ -18,10 +18,10 @@ from xrpl.models.requests import Tx
 from xrpl.models.transactions.transaction import Transaction
 from xrpl.wallet import Wallet
 
-from . import ap4m, config, deployments, device, keystore, subwallets, vendors
+from . import ap4m, config, deployments, device, directory, keystore, subwallets, vendors
 from .burn import reclaim as ledger_reclaim, retire as ledger_retire
 from .fund import fund_burner, funding_payment
-from .ledger import account_info, client, cosign_and_submit, cosign_combine, decode_memos, prepare, rlusd_balance
+from .ledger import account_info, client, cosign_and_submit, cosign_combine, decode_memos, prepare, rlusd_balance, submit_capture
 
 app = FastAPI(title="cereal service")
 _main_wallet = threading.Lock()  # one main-wallet transaction sequence at a time
@@ -38,6 +38,18 @@ class DeployRequest(BaseModel):
     speculos_decision: str | None = None
     # Part 5: the quote-based plan behind this budget (chosen vendor and price, fallbacks, skipped vendors and why)
     plan: dict | None = None
+    # Part 5: payments above this many RLUSD need the owner's Ledger instead of cereal (None = company default only)
+    approval_threshold: str | None = None
+    sweep_when_done: bool = False            # leftovers go home automatically when the subagent reports done
+    name: str | None = None                  # the wallet's name, e.g. "Market Sizing"
+    sentence: str | None = None              # the plain-English sentence it was created from
+    speculos_payment_decision: str | None = None  # Speculos demos only: the owner's button for large payments
+
+
+class WalletRequest(BaseModel):
+    sentence: str
+    speculos_decision: str | None = None          # Speculos demos only: the owner's button for the budget
+    speculos_payment_decision: str | None = None  # ... and for payments above the threshold
 
 
 class VendorIssueRequest(BaseModel):
@@ -124,6 +136,11 @@ def deploy(req: DeployRequest) -> dict:
         rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours, req.vendor_class)
         if req.plan:
             rec = deployments.update(rec["id"], plan=req.plan)
+        extra = {k: v for k, v in {"approval_threshold": req.approval_threshold, "name": req.name,
+                                   "sentence": req.sentence, "sweep_when_done": req.sweep_when_done or None,
+                                   "speculos_payment_decision": req.speculos_payment_decision}.items() if v is not None}
+        if extra:
+            rec = deployments.update(rec["id"], **extra)
         sub_key = keystore.new_subagent_key(rec["id"])
         deployments.update(rec["id"], subagent=sub_key)
         sub = Wallet.create()  # the subwallet's address exists before anything is on-ledger, so the owner sees it
@@ -163,6 +180,29 @@ def deploy(req: DeployRequest) -> dict:
     return {"ok": True, **_with_balance(rec)}
 
 
+@app.post("/wallets/preview")
+def wallet_preview(req: WalletRequest) -> dict:
+    """Part 5: a plain-English sentence → the limits card the owner confirms. Reads only; signs and sends nothing."""
+    from . import wallet_card
+    return wallet_card.build_card(req.sentence)
+
+
+@app.post("/wallets")
+def wallet_create(req: WalletRequest) -> dict:
+    """Create a disposable wallet from a sentence. The card is rebuilt here from the sentence (a client's copy of the
+    card is never trusted), refused if it has problems, then deployed with the owner's Ledger approval as usual."""
+    from . import wallet_card
+    card = wallet_card.build_card(req.sentence)
+    if not card["ok"]:
+        return _refuse("card_problems", problems=card["problems"], card=card)
+    out = deploy(DeployRequest(task=card["name"], budget=card["budget"], allowed_payees=card["allowed_payees"],
+                               expires_in_hours=card["expires_in_hours"], approval_threshold=card["approval_threshold"],
+                               sweep_when_done=card["sweep_when_done"], name=card["name"], sentence=req.sentence,
+                               speculos_decision=req.speculos_decision,
+                               speculos_payment_decision=req.speculos_payment_decision))
+    return {**out, "card": card}
+
+
 @app.get("/subagents")
 def list_subagents() -> list[dict]:
     return [_with_balance(r) for r in deployments.all_()]
@@ -178,9 +218,13 @@ def get_subagent(dep_id: str) -> dict:
 
 @app.post("/subagents/{dep_id}/done")
 def done(dep_id: str, req: DoneRequest) -> dict:
-    if not deployments.get(dep_id):
+    rec = deployments.get(dep_id)
+    if not rec:
         raise HTTPException(404, "unknown deployment")
-    return deployments.update(dep_id, summary=req.summary, finished_at=datetime.now(timezone.utc).isoformat())
+    rec = deployments.update(dep_id, summary=req.summary, finished_at=datetime.now(timezone.utc).isoformat())
+    if rec.get("sweep_when_done") and rec["status"] == "active":  # "sweep back when done"
+        return {**rec, "swept": reclaim(dep_id)}
+    return rec
 
 
 @app.post("/subagents/{dep_id}/reclaim")
@@ -275,6 +319,45 @@ def _resolve_presented(rec: dict) -> dict:
     return deployments.get(rec["id"])
 
 
+def _approval_threshold(rec: dict) -> Decimal | None:
+    """The lower of the wallet's own threshold and the company default; None when neither is set."""
+    vals = [Decimal(str(v)) for v in (rec.get("approval_threshold"), config.APPROVAL_THRESHOLD) if v not in (None, "")]
+    return min(vals) if vals else None
+
+
+def _owner_approves_payment(rec: dict, agent_signed: Transaction, amt, threshold: Decimal, present: bool,
+                            resource: str | None) -> dict:
+    """A payment above the threshold passed every policy check; cereal does NOT co-sign it. The owner's Ledger is
+    asked instead: it shows the payment, and if approved its signature (weight 2) joins the subagent's (weight 1)."""
+    from xrpl.core.binarycodec import decode
+    from xrpl.transaction import multisign
+    c = client()
+    if not device.available():
+        return _refuse("device_unavailable", requested=amt.value, threshold=str(threshold))
+    d = agent_signed.to_dict(); d.pop("signers", None)
+    base = Transaction.from_dict(d)
+    decision = None if config.DEVICE_DECISION == "manual" else rec.get("speculos_payment_decision")
+    signed = device.sign(base, decision)
+    approval = {"by": signed.get("address") or config.LEDGER_ADDRESS, "threshold": str(threshold),
+                "result": "approved" if signed.get("ok") else signed.get("result"), "screens": signed.get("screens", [])}
+    if not signed.get("ok"):
+        return _refuse(signed.get("result") or "device_error", requested=amt.value, threshold=str(threshold),
+                       approval=approval, sent_transactions=0)
+    combined = multisign(base, [agent_signed, Transaction.from_xrpl(decode(signed["signedBlob"]))])
+    entry = {"to": agent_signed.destination, "amount": amt.value, "approved_by": "ledger", "approval": approval,
+             "at": datetime.now(timezone.utc).isoformat()}
+    if present:  # x402: the vendor's facilitator submits it
+        h = combined.get_hash()
+        deployments.record_payment(rec["id"], {**entry, "rail": "x402", "resource": resource, "ok": None,
+                                               "result": "presented", "hash": h,
+                                               "explorer": f"{config.EXPLORER}/transactions/{h}"})
+        return {"ok": True, "presented": True, "hash": h, "blob": combined.blob(), "approved_by": "ledger",
+                "approval": approval}
+    result = submit_capture(combined, c)
+    deployments.record_payment(rec["id"], {**entry, "rail": "direct", **result})
+    return {**result, "approved_by": "ledger", "approval": approval}
+
+
 def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, resource: str | None = None) -> dict:
     if not rec or rec["status"] != "active":
         return _refuse("unknown_or_inactive_deployment")
@@ -302,6 +385,9 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     memos = decode_memos(tx_json)
     if not memos or memos[0].get("job") != rec["id"] or memos[0].get("tag") != rec["tag"]:
         return _refuse("memo_mismatch")
+    threshold = _approval_threshold(rec)
+    if threshold is not None and Decimal(amt.value) > threshold:
+        return _owner_approves_payment(rec, tx, amt, threshold, present, resource)
     if present:  # x402: hand the co-signed blob back; the vendor's facilitator verifies and submits it
         combined = cosign_combine(tx, config.wallet("CEREAL_COSIGN"))
         result = {"ok": True, "presented": True, "hash": combined.get_hash(), "blob": combined.blob()}
@@ -402,6 +488,12 @@ def cosign(req: CosignRequest) -> dict:
 
 
 # ---- vendor registry (cereal's CREDENTIAL_ISSUER; vendors accept with their own key) ----
+@app.get("/vendors")
+def vendor_list() -> list[dict]:
+    """Every vendor cereal knows: name, address, credential (from the ledger), items and prices, paid and refused."""
+    return directory.list_vendors()
+
+
 @app.get("/vendors/{address}")
 def vendor_status(address: str, vendor_class: str = "data") -> dict:
     return vendors.check(client(), address, vendor_class=vendor_class)

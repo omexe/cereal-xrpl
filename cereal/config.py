@@ -42,6 +42,8 @@ AP4M_MERCHANT_URL = os.getenv("AP4M_MERCHANT_URL", "http://127.0.0.1:4308/resour
 VENDOR_URLS = [u.strip() for u in os.getenv("CEREAL_VENDORS", "http://localhost:8000,http://localhost:8002,http://localhost:8003").split(",") if u.strip()]
 PRICE_BUFFER_PCT = os.getenv("CEREAL_PRICE_BUFFER_PCT", "0.20")   # budget = quote + max(quote * pct, min)
 PRICE_BUFFER_MIN = os.getenv("CEREAL_PRICE_BUFFER_MIN", "0.05")
+# Part 5: payments above this need the owner's Ledger instead of cereal's co-signature (a wallet may set a lower one)
+APPROVAL_THRESHOLD = os.getenv("CEREAL_APPROVAL_THRESHOLD") or None
 # Mastercard AP4M is sidelined (built and verified, off by default): CEREAL_AP4M=1 on the service turns the rail on.
 AP4M_ENABLED = os.getenv("CEREAL_AP4M", "0") == "1"
 DEVICE_WINDOW_LEDGERS = int(os.getenv("CEREAL_DEVICE_WINDOW_LEDGERS", "150"))  # time for a human to press approve
