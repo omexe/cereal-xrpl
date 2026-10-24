@@ -1,0 +1,17 @@
+{
+  "name": "cereal-ap4m",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "description": "Mastercard AP4M x402 rail for cereal subagents on XRPL EVM Testnet (chain 1449000)",
+  "scripts": {
+    "merchant": "node merchant.mjs",
+    "pay": "node pay.mjs",
+    "verify": "node verify.mjs"
+  },
+  "dependencies": {
+    "@ap4m/sdk": "https://hackathon.ap4m.build/sdk/ap4m-sdk.tgz",
+    "dotenv": "^16.4.7",
+    "ethers": "6.17.0"
+  }
+}

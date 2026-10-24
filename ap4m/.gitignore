@@ -1,0 +1,8 @@
+.env
+node_modules/
+agent-state/
+merchant-state/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.lock
