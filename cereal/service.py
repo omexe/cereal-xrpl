@@ -18,7 +18,7 @@ from xrpl.models.requests import Tx
 from xrpl.models.transactions.transaction import Transaction
 from xrpl.wallet import Wallet
 
-from . import config, deployments, device, keystore, subwallets, vendors
+from . import ap4m, config, deployments, device, keystore, subwallets, vendors
 from .burn import reclaim as ledger_reclaim, retire as ledger_retire
 from .fund import fund_burner, funding_payment
 from .ledger import account_info, client, cosign_and_submit, cosign_combine, decode_memos, prepare, rlusd_balance
@@ -58,6 +58,11 @@ class CosignRequest(BaseModel):
     resource: str | None = None  # the URL being bought, for the record
 
 
+class Ap4mRequest(BaseModel):
+    resource: str
+    max_rlusd: str = "0.25"  # the most this subagent will pay for the resource
+
+
 class DoneRequest(BaseModel):
     summary: str
 
@@ -91,7 +96,7 @@ def main_wallet() -> dict:
             "active_subagents": len(deployments.active()),
             "policy": {"vendor_credentials": config.REQUIRE_VENDOR_CREDENTIAL, "issuer": config.address("CREDENTIAL_ISSUER"),
                        "device_funding": config.DEVICE_FUNDING, "ledger_recovery": config.LEDGER_RECOVERY,
-                       "device": config.LEDGER_ADDRESS},
+                       "device": config.LEDGER_ADDRESS, "ap4m": ap4m.available()},
             "caps": {"MAX_SUBAGENT_BUDGET": config.MAX_SUBAGENT_BUDGET,
                      "MAX_OUTSTANDING_BUDGET": config.MAX_OUTSTANDING_BUDGET,
                      "MAX_ACTIVE_SUBAGENTS": config.MAX_ACTIVE_SUBAGENTS}}
@@ -209,6 +214,12 @@ def retire(dep_id: str) -> dict:
 TF_PARTIAL_PAYMENT = 0x00020000
 
 
+def ap4m_spent(rec: dict) -> Decimal:
+    """RLUSD this subagent already spent on the AP4M rail (paid from the team's AP4M vault, not its subwallet)."""
+    return sum((Decimal(str(p["amount"])) for p in rec.get("payments", []) if p.get("rail") == "ap4m" and p.get("ok")),
+               Decimal(0))
+
+
 def _payment_shape_refusal(tx_json: dict, amt) -> dict | None:
     """Only plain, exact RLUSD payments: no partial payments, no paths, SendMax (x402 sets it) at most the Amount."""
     if int(tx_json.get("Flags", 0) or 0) & TF_PARTIAL_PAYMENT:
@@ -259,7 +270,7 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     shape = _payment_shape_refusal(tx_json, amt)
     if shape:
         return shape
-    remaining = rlusd_balance(c, rec["subwallet"])
+    remaining = rlusd_balance(c, rec["subwallet"]) - ap4m_spent(rec)  # one budget across both rails
     if Decimal(amt.value) > remaining:
         return _refuse("over_budget", requested=amt.value, remaining=str(remaining))
     if datetime.now(timezone.utc) >= datetime.fromisoformat(rec["expires_at"]):
@@ -279,6 +290,40 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     deployments.record_payment(rec["id"], {"to": tx.destination, "amount": amt.value, "rail": "direct", **result,
                                            "at": datetime.now(timezone.utc).isoformat()})
     return result
+
+
+@app.post("/subagents/{dep_id}/ap4m")
+def pay_ap4m(dep_id: str, req: Ap4mRequest) -> dict:
+    """Part 4b: a subagent pays an AP4M merchant's 402 over Mastercard's rail (XRPL EVM). Same budget as the XRPL rails:
+    refused if the price could take the subagent past its budget across both. The Channel's on-chain cap is the budget."""
+    rec = deployments.get(dep_id)
+    refused = None
+    if not rec or rec["status"] != "active":
+        refused = _refuse("unknown_or_inactive_deployment")
+    elif datetime.now(timezone.utc) >= datetime.fromisoformat(rec["expires_at"]):
+        refused = _refuse("expired", expires_at=rec["expires_at"])
+    else:
+        remaining = rlusd_balance(client(), rec["subwallet"]) - ap4m_spent(rec)
+        if Decimal(req.max_rlusd) > remaining:
+            refused = _refuse("over_budget", requested=req.max_rlusd, remaining=str(remaining))
+        elif not all(ap4m.available().values()):
+            refused = _refuse("ap4m_unavailable", **ap4m.available(), hint="cd ap4m && npm ci; create ap4m/.env")
+    if refused:
+        if rec:
+            deployments.record_refusal(dep_id, {"payee": req.resource, "amount": req.max_rlusd, "rail": "ap4m", **refused,
+                                                "at": datetime.now(timezone.utc).isoformat()})
+        return refused
+    out = ap4m.pay(req.resource, req.max_rlusd, rec["budget"], rec["id"], rec["tag"])
+    entry = {"rail": "ap4m", "resource": req.resource, "to": out.get("merchant_payout") or "ap4m-merchant",
+             "amount": out.get("amount") or req.max_rlusd, "ok": bool(out.get("ok")),
+             "result": "redeemed" if out.get("ok") else out.get("refused"), "hash": out.get("redeem_tx"),
+             "explorer": out.get("explorer"), "channel_id": out.get("channel_id"), "receipt": out.get("receipt_id"),
+             "payout_tx": out.get("payout_tx"), "at": datetime.now(timezone.utc).isoformat()}
+    if out.get("ok"):
+        deployments.record_payment(dep_id, entry)
+    else:
+        deployments.record_refusal(dep_id, {"payee": req.resource, **entry, "refused": out.get("refused")})
+    return out
 
 
 @app.post("/cosign")

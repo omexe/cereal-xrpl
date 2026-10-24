@@ -37,6 +37,7 @@ SPECULOS_URL = os.getenv("SPECULOS_URL", "http://127.0.0.1:5000")
 # Part 4: the vendors' x402 paywalls (x402/server.py; vendor B = the revoked vendor, for the refusal beat)
 X402_VENDOR_A_URL = os.getenv("X402_VENDOR_A_URL", "http://localhost:8000")
 X402_VENDOR_B_URL = os.getenv("X402_VENDOR_B_URL", "http://localhost:8002")
+AP4M_MERCHANT_URL = os.getenv("AP4M_MERCHANT_URL", "http://127.0.0.1:4308/resource")  # ap4m/merchant.mjs
 DEVICE_WINDOW_LEDGERS = int(os.getenv("CEREAL_DEVICE_WINDOW_LEDGERS", "150"))  # time for a human to press approve
 REQUIRE_VENDOR_CREDENTIAL = os.getenv("CEREAL_REQUIRE_VENDOR_CREDENTIAL", "1") == "1"  # Part 2 (on by default)
 

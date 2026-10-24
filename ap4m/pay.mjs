@@ -299,8 +299,11 @@ async function main() {
     ok: true,
     rail: 'ap4m',
     channel_id: channelId,
-    amount: ethers.formatUnits(amountWei, 18),
+    // what this voucher actually redeemed on-chain (the merchant may charge less than --amount, the maximum)
+    amount: ethers.formatUnits(stateAfter.redeemed - stateBefore.redeemed, 18),
+    max_amount: ethers.formatUnits(amountWei, 18),
     cumulative: ethers.formatUnits(stateAfter.redeemed, 18),
+    merchant_payout: channelPayout,
     redeem_tx: purchase.transactionHash,
     claim_id: purchase.claimId,
     settlement_tx: settled.settlement_tx ?? null,

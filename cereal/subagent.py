@@ -88,6 +88,12 @@ class Subagent:
                 out["refused"] = "paid_not_served"  # evidence: the validated payment; the vendor owes the resource
         return out
 
+    def buy_ap4m(self, url: str, max_rlusd: str = "0.25") -> dict:
+        """Get a resource from a Mastercard AP4M merchant (XRPL EVM). cereal checks my budget across both rails and pays
+        the 402 with an EIP-712 voucher from my own AP4M Channel, capped on-chain at my budget."""
+        return requests.post(f"{config.SERVICE_URL}/subagents/{self.dep_id}/ap4m",
+                             json={"resource": url, "max_rlusd": str(max_rlusd)}, timeout=900).json()
+
     def done(self, summary: str) -> dict:
         """Report that my task is finished, with a one-line summary."""
         return requests.post(f"{config.SERVICE_URL}/subagents/{self.dep_id}/done", json={"summary": summary},
@@ -170,6 +176,7 @@ def main() -> None:
     ap.add_argument("--vendors", default=None, help="comma-separated candidate vendors (roles or addresses), tried in order")
     ap.add_argument("--prove-lock", action="store_true"); ap.add_argument("--hijack", action="store_true")
     ap.add_argument("--buy", action="append", default=[], help="x402 resource URL to buy (repeatable); replaces --payments")
+    ap.add_argument("--ap4m", action="append", default=[], help="AP4M merchant resource URL to buy (repeatable)")
     a = ap.parse_args()
     s = Subagent(a.deployment_id)
     rec = s.record()
@@ -180,14 +187,20 @@ def main() -> None:
                    "budget": rec["budget"], "task": a.task, "vendors": vendors, "mode": "llm" if llm.available() else "plan"})
     if a.prove_lock:
         emit("prove_lock", s.prove_lock())
-    if a.buy and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data
+    if (a.buy or a.ap4m) and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data
         for url in a.buy:
             r = s.buy(url, max_rlusd=s.budget_left()["remaining_rlusd"])
             emit("refused" if r.get("refused") else "buy", {"resource": url, **{k: v for k, v in r.items() if k != "data"},
                                                             "data_keys": sorted((r.get("data") or {}).keys())
                                                             if isinstance(r.get("data"), dict) else None})
-        got = sum(1 for e in s.record()["payments"] if e.get("rail") == "x402")
-        s.done(f"{a.task}: bought {got} of {len(a.buy)} x402 resources")
+        for url in a.ap4m:  # the second rail: Mastercard AP4M on XRPL EVM, same budget
+            r = s.buy_ap4m(url)
+            emit("refused" if not r.get("ok") else "buy_ap4m",
+                 {"resource": url, **{k: r.get(k) for k in ("ok", "refused", "amount", "channel_id", "redeem_tx",
+                                                            "receipt_id", "merchant_payout_delta", "explorer", "error")}})
+        pays = s.record()["payments"]
+        got = {rail: sum(1 for e in pays if e.get("rail") == rail) for rail in ("x402", "ap4m")}
+        s.done(f"{a.task}: bought {got['x402']} of {len(a.buy)} x402 and {got['ap4m']} of {len(a.ap4m)} AP4M resources")
     elif llm.available():
         system = (f"You are a cereal subagent. Task: {a.task}. You have a subwallet with {rec['budget']} RLUSD. "
                   f"Candidate vendors, in order of preference: {vendors}. Each purchase costs {amount} RLUSD. Make "
@@ -200,10 +213,14 @@ def main() -> None:
                      "required": ["payee", "amount"]}, s.pay),
             "buy": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
                      "required": ["url"]}, s.buy),
+            "buy_ap4m": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
+                          "required": ["url"]}, s.buy_ap4m),
             "done": ({"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}, s.done),
         }
         if a.buy:
             system += f" Resources to buy over x402 with buy(): {a.buy}. Pay only if the price fits budget_left()."
+        if a.ap4m:
+            system += f" Resources to buy from Mastercard AP4M merchants with buy_ap4m(): {a.ap4m}."
         llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)
     else:
         blocked: set[str] = set()

@@ -149,6 +149,9 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
                 print(f"│     refused  {f['payee'][:10]}… vendor {v.get('status')}: {(v.get('revocation') or {}).get('reason', '')} "
                       f"(public revocation {EXPLORER}/transactions/{ev})")
         for p in r["payments"]:
+            if p.get("rail") == "ap4m":  # Mastercard AP4M on XRPL EVM: voucher redeemed on PaymentLedger
+                print(f"│     ap4m {p['amount']} → {str(p['to'])[:10]}…  {p.get('result')}  {p.get('explorer')}  (channel {str(p.get('channel_id'))[:10]}…)")
+                continue
             via = f"x402 {p['resource'].split('//')[-1].split('/', 1)[-1]}" if p.get("rail") == "x402" and p.get("resource") else "pay"
             print(f"│     {via} {p['amount']} → {p['to'][:10]}…  {p.get('result')}  {EXPLORER}/transactions/{p.get('hash')}")
         for x in h.get("reclaim", []) or []:
@@ -169,7 +172,7 @@ def _up(url: str) -> bool:
 
 
 def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lock: bool, beats: bool = False,
-        device_beats: bool = False, x402: bool = False) -> None:
+        device_beats: bool = False, x402: bool = False, ap4m: bool = False) -> None:
     before = _get("/main")
     if payees is None:  # Part 2: any vendor credentialed on-ledger; Part 1: allowlist vendor A
         payees = [] if before.get("policy", {}).get("vendor_credentials") else [config.address("VENDOR_A")]
@@ -179,6 +182,8 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
     rejected: list[dict] = []
     if device_beats and not before.get("policy", {}).get("device_funding"):
         sys.exit("--device needs the Ledger configured: LEDGER_ADDRESS set and CEREAL_DEVICE_FUNDING not 0")
+    if ap4m and not before.get("policy", {}).get("ap4m", {}).get("env_file"):
+        sys.exit("--ap4m needs ap4m/.env (the AP4M agent key) and ap4m/node_modules (cd ap4m && npm ci)")
     if x402 and not _up(config.X402_VENDOR_A_URL):
         sys.exit(f"--x402 needs vendor A's paywall at {config.X402_VENDOR_A_URL} (make vendor)")
     if device_beats:  # the main agent asks for one budget too many; the owner says no on the device
@@ -226,6 +231,8 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
                     if i == 0 and _up(config.X402_VENDOR_B_URL):
                         urls.insert(0, f"{config.X402_VENDOR_B_URL}/swell/agenda")
                     extra = [x for u in urls for x in ("--buy", u)]
+                if ap4m:  # Part 4b: each subagent also buys once from the Mastercard AP4M merchant (its own Channel)
+                    extra += ["--ap4m", config.AP4M_MERCHANT_URL]
                 agent.start_subagent(r["id"], task, extra=extra)
         for d in ids:
             w = agent.wait_subagent(d)
@@ -271,12 +278,14 @@ def main() -> None:
     ap.add_argument("--beats", action="store_true", help="Part 2 demo: revoked vendor, hijack, stolen keys")
     ap.add_argument("--x402", action="store_true", help="Part 4 demo: subagents buy over x402 paywalls (t54); "
                                                         "vendor B's paywall is refused before any payment")
+    ap.add_argument("--ap4m", action="store_true", help="Part 4b: each subagent also buys from the Mastercard AP4M "
+                                                        "merchant (needs ap4m/merchant.mjs on :4308)")
     ap.add_argument("--device", action="store_true", help="Part 3 demo: owner rejects one budget on the Ledger, "
                                                           "approves the rest, recovers one subwallet alone")
     a = ap.parse_args()
     if a.retire_all:
         sys.exit(1 if retire_all() else 0)  # non-zero while some are still too young
-    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats, a.device, a.x402)
+    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats, a.device, a.x402, a.ap4m)
 
 
 if __name__ == "__main__":
