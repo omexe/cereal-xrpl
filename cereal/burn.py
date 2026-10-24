@@ -20,9 +20,26 @@ def burnable_in(c: JsonRpcClient, burner_addr: str) -> int:
     return (seq + 256) - ledger_index(c) + 1
 
 
+def reclaim(burner_addr: str, treasury_addr: str, agent: Wallet, cosign: Wallet, c: JsonRpcClient,
+            job_id: str = "", tag: str = "") -> list[tuple[str, dict]]:
+    """Sweep the remaining RLUSD to the main wallet and close the trust line (default state). No AccountDelete."""
+    return burn(burner_addr, treasury_addr, agent, cosign, c, job_id, tag, delete=False)
+
+
+def retire(burner_addr: str, treasury_addr: str, agent: Wallet, cosign: Wallet, c: JsonRpcClient,
+           job_id: str = "", tag: str = "") -> dict:
+    """AccountDelete → main wallet once the account is old enough; returns a refusal with the wait otherwise."""
+    wait = burnable_in(c, burner_addr)
+    if wait > 0:
+        return {"ok": False, "refused": "too_young", "ready_in_ledgers": wait, "ready_in_seconds": wait * 4}
+    memos = [job_memo(job_id, tag, kind="retire")] if job_id else []
+    return multisign_submit(stamp(AccountDelete(account=burner_addr, destination=treasury_addr), memos),
+                            [agent, cosign], c, fail_hard=True)
+
+
 def burn(burner_addr: str, treasury_addr: str, agent: Wallet, cosign: Wallet, c: JsonRpcClient,
-         job_id: str = "", tag: str = "") -> list[tuple[str, dict]]:
-    memos = [job_memo(job_id, tag, kind="burn")] if job_id else []
+         job_id: str = "", tag: str = "", delete: bool = True) -> list[tuple[str, dict]]:
+    memos = [job_memo(job_id, tag, kind="reclaim" if not delete else "burn")] if job_id else []
     steps: list[tuple[str, dict]] = []
     remaining = rlusd_balance(c, burner_addr)
     from xrpl.models.requests import AccountLines
@@ -42,6 +59,8 @@ def burn(burner_addr: str, treasury_addr: str, agent: Wallet, cosign: Wallet, c:
         steps.append(("trustset_zero", r))
         if not r["ok"]:
             return steps
+    if not delete:
+        return steps
     r = multisign_submit(stamp(AccountDelete(account=burner_addr, destination=treasury_addr), memos),
                          [agent, cosign], c, fail_hard=True)
     steps.append(("account_delete", r))

@@ -26,9 +26,11 @@ def agent_sign(tx: Transaction, agent: Wallet, c: JsonRpcClient) -> Transaction:
     return sign(prepare(tx, c, signers_count=2), agent, multisign=True)
 
 
-def request_cosign(job_id: str, agent_signed: Transaction, url: str = config.COSIGN_URL, timeout: int = 60) -> dict:
+def request_cosign(job_id: str, agent_signed: Transaction, url: str = config.COSIGN_URL, timeout: int = 90,
+                   deployment: bool = False) -> dict:
     """POST the agent-signed transaction to cereal. Returns the service's result (hash or refusal)."""
-    r = requests.post(url, json={"job_id": job_id, "tx": agent_signed.to_xrpl()}, timeout=timeout)
+    key = "deployment_id" if deployment else "job_id"
+    r = requests.post(url, json={key: job_id, "tx": agent_signed.to_xrpl()}, timeout=timeout)
     return r.json()
 
 
