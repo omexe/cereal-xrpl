@@ -8,3 +8,5 @@ node_modules/
 *.log
 jobs.json
 exports/
+keys/
+deployments.json

@@ -2,7 +2,7 @@
 
 hackathon project for the AI & Fintech XRPL Hackathon, NYC, Oct 24–25 2026 (XRPL Commons). 36 hours; only work done during the event counts (say so in `HACKATHON.md` with commit links).
 
-Read `docs/DEMO-SCRIPT.md` (the 90 seconds we are building) and `docs/BUILD-ORDER.md` (the steps, in order, with acceptance hashes) before writing code. The demo script decides scope: if a feature is not in it, it is cut.
+Read `docs/BUILD-ORDER.md` (the build, in parts, with acceptance checks) and `docs/SPEC.md` (the contracts per part) before writing code. **Build one part at a time: Part 1 (main agent on the main wallet deploys subagents into subwallets) must pass its acceptance on testnet before any Part 2+ feature is wired into it.** `docs/DEMO-SCRIPT.md` is rewritten to the main-agent/subagent story in Part 6.
 
 ## what cereal is, in one sentence
 disposable, budget-exact wallets for AI agents, written in one plain-English sentence, locked by the ledger (2-of-2 signer list, master disabled), checked against public vendor credentials, and burned at the end into an accounting export.
@@ -37,7 +37,7 @@ disposable, budget-exact wallets for AI agents, written in one plain-English sen
 - `docs/` `DEMO-SCRIPT.md`, `BUILD-ORDER.md`. `HACKATHON.md` at code lock.
 
 ## workflow
-- hard part first, in `docs/BUILD-ORDER.md` order; each step ends with its acceptance check and a commit (`step N: …`). small commits on `main`, every 15–20 minutes, never squashed.
+- part by part, step by step, in `docs/BUILD-ORDER.md` order; each step ends with its acceptance check and a commit (`p1.3: …`). small commits on `main`, every 15–20 minutes, never squashed.
 - sat 22:00 go/no-go gate: if the 90-second path does not run end to end, cut in this order: x402 facilitator leg → QuickNode webhook → AgentCore deploy → Speculos. never cut the lock, the two-key payment, `tefBAD_QUORUM`, the credential revoke, the burn, the export.
 - code lock sun 09:00: README (live URL first line, primitives, hashes), `HACKATHON.md`, tests, video, submission answers from `docs/DEMO-SCRIPT.md`. submit by 12:00; edit text until 12:30.
 
