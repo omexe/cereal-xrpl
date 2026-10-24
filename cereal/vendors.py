@@ -35,6 +35,24 @@ def revoke(issuer: Wallet, vendor_addr: str, c: JsonRpcClient, reason: str, repo
     return sign_submit(stamp(tx, [memo]), issuer, c)
 
 
+def revocation(c: JsonRpcClient, vendor_addr: str, issuer_addr: str | None = None) -> dict | None:
+    """The public evidence for a revoked vendor: the issuer's CredentialDelete for this subject, with its reason."""
+    from .ledger import account_tx, explorer
+    issuer_addr = issuer_addr or config.address("CREDENTIAL_ISSUER")
+    for t in account_tx(c, issuer_addr, limit=200):
+        tx = t["tx"]
+        if tx.get("TransactionType") == "CredentialDelete" and tx.get("Subject") == vendor_addr \
+                and tx.get("CredentialType") in (CTYPE_HEX, CTYPE_HEX.upper()):
+            reason = {}
+            for m in tx.get("Memos", []) or []:
+                try:
+                    reason = json.loads(bytes.fromhex(m["Memo"]["MemoData"]).decode())
+                except (KeyError, ValueError):
+                    pass
+            return {"hash": t["hash"], "explorer": explorer(t["hash"]), "ledger_index": t.get("ledger_index"), **reason}
+    return None
+
+
 def check(c: JsonRpcClient, vendor_addr: str, issuer_addr: str | None = None) -> dict:
     """What the co-signer reads before signing: valid / pending / none. Reads the ledger, not a database."""
     issuer_addr = issuer_addr or config.address("CREDENTIAL_ISSUER")
@@ -43,14 +61,13 @@ def check(c: JsonRpcClient, vendor_addr: str, issuer_addr: str | None = None) ->
         req = LedgerEntry(credential=Credential(subject=vendor_addr, issuer=issuer_addr, credential_type=CTYPE_HEX))
         res = c.request(req).result
         node = res.get("node") or {}
-        if not node:
-            return {"status": "none", "vendor": vendor_addr}
     except Exception:
-        # Fallback: scan the vendor's credential objects.
+        # Not found (or an older server): scan the vendor's credential objects.
         node = next((o for o in account_objects(c, vendor_addr, "credential")
-                     if o.get("Issuer") == issuer_addr and o.get("CredentialType") == CTYPE_HEX), None)
-        if not node:
-            return {"status": "none", "vendor": vendor_addr}
+                     if o.get("Issuer") == issuer_addr and o.get("CredentialType", "").upper() == CTYPE_HEX.upper()), None) or {}
+    if not node:
+        rev = revocation(c, vendor_addr, issuer_addr)
+        return {"status": "revoked", "vendor": vendor_addr, "revocation": rev} if rev else {"status": "none", "vendor": vendor_addr}
     accepted = bool(int(node.get("Flags", 0)) & LSF_ACCEPTED)
     return {"status": "valid" if accepted else "pending", "vendor": vendor_addr, "issuer": issuer_addr,
             "index": node.get("index"), "expiration": node.get("Expiration")}
