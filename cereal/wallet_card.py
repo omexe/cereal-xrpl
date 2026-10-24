@@ -88,8 +88,12 @@ def build_card(sentence: str, known: list[dict] | None = None) -> dict:
     """Parse, resolve every vendor against the directory and the ledger, apply defaults, and list what's wrong."""
     from . import llm
     known = known if known is not None else directory.list_vendors()
-    raw = (parse_with_claude(sentence, [v["name"] for v in known]) if llm.available() else None) or parse_fallback(sentence)
+    raw = (parse_with_claude(sentence, [v["name"] for v in known]) if llm.available() else None)
     problems, notes, allowed, vendors_out = [], [], [], []
+    if raw is None:
+        if llm.available():
+            notes.append(f"Claude couldn't read this ({llm.last_error}); read by the backup parser instead")
+        raw = parse_fallback(sentence)
     for n in raw.get("vendor_names") or []:
         addr = directory.resolve(n, known)
         v = next((x for x in known if x["address"] == addr), None)

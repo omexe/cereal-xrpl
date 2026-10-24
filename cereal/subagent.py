@@ -181,6 +181,37 @@ def hijack(s: Subagent) -> None:
     report(s.dep_id, "hijack_alone", alone, {"attacker": attacker})
 
 
+def _deterministic(s: "Subagent", a, vendors: list[str], amount: str) -> None:
+    """The plan a subagent runs without a model (or when the model is unavailable): buy what it was told to, in order,
+    at most the listed price, falling back to the next listed vendor if one is refused."""
+    if a.buy or a.ap4m:
+        for spec in a.buy:  # "url" or "url@max|fallback_url@max": alternatives in the plan's order
+            for alt in spec.split("|"):
+                url, _, cap = alt.partition("@")
+                left = Decimal(str(s.budget_left()["remaining_rlusd"] or "0"))
+                limit = min(Decimal(cap), left) if cap else left
+                r = s.buy(url, max_rlusd=str(limit))
+                emit("refused" if r.get("refused") else "buy", {"resource": url, "limit": str(limit),
+                                                                **{k: v for k, v in r.items() if k != "data"},
+                                                                "data_keys": sorted((r.get("data") or {}).keys())
+                                                                if isinstance(r.get("data"), dict) else None})
+                if r.get("ok"):
+                    break
+        for url in a.ap4m:  # the second rail: Mastercard AP4M on XRPL EVM, same budget
+            r = s.buy_ap4m(url)
+            emit("refused" if not r.get("ok") else "buy_ap4m",
+                 {"resource": url, **{k: r.get(k) for k in ("ok", "refused", "amount", "channel_id", "redeem_tx",
+                                                            "receipt_id", "merchant_payout_delta", "explorer", "error")}})
+        pays = s.record()["payments"]
+        got = {rail: sum(1 for e in pays if e.get("rail") == rail) for rail in ("x402", "ap4m")}
+        s.done(f"{a.task}: bought {got['x402']} of {len(a.buy)} x402 and {got['ap4m']} of {len(a.ap4m)} AP4M resources")
+    else:
+        blocked: set[str] = set()
+        made = sum(1 for _ in range(a.payments) if buy_with_fallback(s, vendors, amount, blocked))
+        refused = f"; refused {sorted(blocked)}" if blocked else ""
+        s.done(f"{a.task}: {made} purchases of {amount} RLUSD{refused}")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("deployment_id"); ap.add_argument("task")
@@ -205,28 +236,7 @@ def main() -> None:
         report(s.dep_id, "prove_lock", pl)
     if a.probe_off_plan:  # the plan lock: a credentialed vendor that is not in this subagent's plan
         emit("plan_lock", {"payee": a.probe_off_plan, **s.pay(_addr(a.probe_off_plan), "0.01")})
-    if (a.buy or a.ap4m) and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data
-        for spec in a.buy:  # "url" or "url@max|fallback_url@max": alternatives in the plan's order
-            for alt in spec.split("|"):
-                url, _, cap = alt.partition("@")
-                left = Decimal(str(s.budget_left()["remaining_rlusd"] or "0"))
-                limit = min(Decimal(cap), left) if cap else left
-                r = s.buy(url, max_rlusd=str(limit))
-                emit("refused" if r.get("refused") else "buy", {"resource": url, "limit": str(limit),
-                                                                **{k: v for k, v in r.items() if k != "data"},
-                                                                "data_keys": sorted((r.get("data") or {}).keys())
-                                                                if isinstance(r.get("data"), dict) else None})
-                if r.get("ok"):
-                    break
-        for url in a.ap4m:  # the second rail: Mastercard AP4M on XRPL EVM, same budget
-            r = s.buy_ap4m(url)
-            emit("refused" if not r.get("ok") else "buy_ap4m",
-                 {"resource": url, **{k: r.get(k) for k in ("ok", "refused", "amount", "channel_id", "redeem_tx",
-                                                            "receipt_id", "merchant_payout_delta", "explorer", "error")}})
-        pays = s.record()["payments"]
-        got = {rail: sum(1 for e in pays if e.get("rail") == rail) for rail in ("x402", "ap4m")}
-        s.done(f"{a.task}: bought {got['x402']} of {len(a.buy)} x402 and {got['ap4m']} of {len(a.ap4m)} AP4M resources")
-    elif llm.available():
+    if llm.available():
         system = (f"You are a cereal subagent. Task: {a.task}. You have a subwallet with {rec['budget']} RLUSD. "
                   f"Candidate vendors, in order of preference: {vendors}. Each purchase costs {amount} RLUSD. Make "
                   f"{a.payments} purchases with pay(). If cereal refuses a vendor, do not retry it; use the next one. "
@@ -252,12 +262,13 @@ def main() -> None:
                        ". Never pay more than the max shown. If cereal refuses, report the refusal; don't retry it.")
         if a.ap4m:
             system += f" Resources to buy from Mastercard AP4M merchants with buy_ap4m(): {a.ap4m}."
-        llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)
+        try:
+            llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)
+        except llm.NoModel as e:
+            emit("model_unavailable", {"reason": str(e), "fallback": "deterministic plan"})
+            _deterministic(s, a, vendors, amount)
     else:
-        blocked: set[str] = set()
-        made = sum(1 for _ in range(a.payments) if buy_with_fallback(s, vendors, amount, blocked))
-        refused = f"; refused {sorted(blocked)}" if blocked else ""
-        s.done(f"{a.task}: {made} purchases of {amount} RLUSD{refused}")
+        _deterministic(s, a, vendors, amount)
     if a.hijack:
         hijack(s)
     final = s.record()

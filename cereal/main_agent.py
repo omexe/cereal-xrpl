@@ -263,6 +263,7 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
         r = agent.deploy_subagent(f"{goal} (an extra subagent the owner did not ask for)", "1", speculos_decision="reject")
         print(f"deploy 1 RLUSD → owner {r.get('refused')} on the Ledger; transactions sent: {r.get('sent_transactions')}")
         rejected.append({"task": "an extra subagent the owner did not ask for", **r})
+    fell_back = False
     if llm.available():
         def deploy_tool(task: str, budget: str) -> dict:
             r = agent.deploy_subagent(task, budget)
@@ -284,10 +285,14 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
                   f"Split the goal into {n} subtasks, deploy one subagent per subtask with deploy_subagent (budgets must sum "
                   f"to at most the envelope), start each with start_subagent, wait for each, then reclaim every subagent. "
                   f"You hold no keys; the service enforces caps. Finish with a short report.")
-        report = llm.run_tool_loop(system, "Start.", tools,
-                                   on_event=lambda name, out: print(f"  · {name}: {json.dumps(out, default=str)[:160]}"))
-        print("\nmain agent report:", report)
-    else:
+        try:
+            report = llm.run_tool_loop(system, "Start.", tools,
+                                       on_event=lambda name, out: print(f"  · {name}: {json.dumps(out, default=str)[:160]}"))
+            print("\nmain agent report:", report)
+        except llm.NoModel as e:  # nothing ran yet, so the deterministic plan takes over safely
+            print(f"model unavailable ({e}); the main agent runs its deterministic plan")
+            fell_back = True
+    if fell_back or not llm.available():
         for i, (task, budget) in enumerate(plan_even(goal, envelope, n)):
             r = agent.deploy_subagent(task, budget)
             print(f"deploy {budget} RLUSD → {r.get('id')} {r.get('subwallet')} {'ok' if r.get('ok') else r}")

@@ -20,11 +20,18 @@ import requests
 
 from . import config  # noqa: F401  (loads .env, where the keys live)
 
-MODEL = os.getenv("CEREAL_MODEL", "claude-opus-5-5")                             # Anthropic API
-OPENROUTER_MODEL = os.getenv("CEREAL_OPENROUTER_MODEL", "anthropic/claude-opus-5.5")  # same model via OpenRouter
+MODEL = os.getenv("CEREAL_MODEL", "claude-haiku-5-5")                              # Anthropic API (Andrew's choice)
+OPENROUTER_MODEL = os.getenv("CEREAL_OPENROUTER_MODEL", "anthropic/claude-haiku-5.5")  # the same model via OpenRouter
 OPENROUTER_URL = os.getenv("OPENROUTER_URL", "https://openrouter.ai/api/v1/chat/completions")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"  # Anthropic refusal fallback ("default" routing)
+OR_MAX_TOKENS = int(os.getenv("CEREAL_OPENROUTER_MAX_TOKENS", "1200"))  # per call; OpenRouter refuses requests the
+                                                                         # account's credit can't cover in full
 served_by: str | None = None                        # which provider answered the last call (for the record)
+last_error: str | None = None                       # why the last call fell through, in plain words
+
+
+class NoModel(Exception):
+    """No provider produced an answer before any tool ran; callers fall back to their deterministic plan."""
 
 
 def providers() -> list[str]:
@@ -81,11 +88,13 @@ def _json_from(text: str) -> dict | None:
 
 def _or_extract(system: str, user: str, schema: dict, name: str) -> dict | None:
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
-    body = {"model": OPENROUTER_MODEL, "max_tokens": 4000, "messages": msgs,
+    body = {"model": OPENROUTER_MODEL, "max_tokens": OR_MAX_TOKENS, "messages": msgs,
             "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}}}
     try:
         data = _or_post(body)
-    except ProviderError:
+    except ProviderError as e:
+        if "HTTP 402" in str(e) or "HTTP 401" in str(e):
+            raise  # credit or key problem: retrying without structured outputs can't help
         # the route may not take structured outputs: ask for the JSON in the reply instead
         body.pop("response_format")
         body["messages"] = [{"role": "system", "content": system + "\nReply with only one JSON object matching this "
@@ -100,7 +109,7 @@ def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, stat
                                               "parameters": schema}} for n, (schema, fn) in tools.items()]
     messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     for _ in range(max_turns):
-        data = _or_post({"model": OPENROUTER_MODEL, "max_tokens": 4000, "messages": messages, "tools": spec,
+        data = _or_post({"model": OPENROUTER_MODEL, "max_tokens": OR_MAX_TOKENS, "messages": messages, "tools": spec,
                          "tool_choice": "auto"})
         msg = (data.get("choices") or [{}])[0].get("message") or {}
         calls = msg.get("tool_calls") or []
@@ -126,6 +135,8 @@ def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, stat
 def _anthropic_create(**kw):
     import anthropic
     client = anthropic.Anthropic()
+    if kw.get("model", "").startswith("claude-haiku"):  # Haiku 5.5 has no server-side refusal fallback
+        return client.messages.create(**kw)
     try:  # server-side refusal fallback, routed by category ("default")
         return client.beta.messages.create(betas=[FALLBACK_BETA], fallbacks="default", **kw)
     except TypeError:  # an SDK without the fallbacks parameter
@@ -179,17 +190,30 @@ def _run_tool(tools: dict, name: str, args: dict, on_event, state: dict) -> Any:
     return out
 
 
+def _plain(err: Exception | str) -> str:
+    s = str(err)
+    if "HTTP 402" in s:
+        return "the OpenRouter account is out of credit (openrouter.ai/settings/credits)"
+    if "HTTP 401" in s:
+        return "the model API key was rejected"
+    return s[:200]
+
+
 def extract(system: str, user: str, schema: dict, name: str) -> dict | None:
-    """One structured answer that matches `schema`, from the first provider that gives a valid one; None if none."""
-    global served_by
+    """One structured answer that matches `schema`, from the first provider that gives a valid one; None if none
+    (then `last_error` says why)."""
+    global served_by, last_error
+    last_error = None if providers() else "no model key set"
     for p in providers():
         try:
             out = (_or_extract if p == "openrouter" else _anthropic_extract)(system, user, schema, name)
-        except Exception:
-            out = None
+        except Exception as e:
+            out, last_error = None, f"{p}: {_plain(e)}"
         if isinstance(out, dict):
-            served_by = OPENROUTER_MODEL if p == "openrouter" else MODEL
+            served_by, last_error = (OPENROUTER_MODEL if p == "openrouter" else MODEL), None
             return out
+        if out is None and last_error is None:
+            last_error = f"{p}: no valid answer"
     return None
 
 
@@ -197,7 +221,7 @@ def run_tool_loop(system: str, user: str, tools: dict[str, tuple[dict, Callable[
                   max_turns: int = 12, on_event: Callable[[str, Any], None] | None = None) -> str:
     """tools: name -> (input JSON schema, python function(**input)). Returns the final text. Falls back to the next
     provider only if the first failed before running any tool (tools can pay; a payment must never be repeated)."""
-    global served_by
+    global served_by, last_error
     last_error = None
     for p in providers():
         state: dict = {}
@@ -206,10 +230,10 @@ def run_tool_loop(system: str, user: str, tools: dict[str, tuple[dict, Callable[
             served_by = OPENROUTER_MODEL if p == "openrouter" else MODEL
             return text
         except Exception as e:
-            last_error = f"{p}: {type(e).__name__}: {e}"[:300]
+            last_error = f"{p}: {_plain(e)}"
             if state.get("tools_run"):
                 return f"stopped after a provider error mid-task ({last_error}); not retried, tools already ran"
-    return f"no model available ({last_error or 'set OPENROUTER_API_KEY or ANTHROPIC_API_KEY'})"
+    raise NoModel(last_error or "no model key set")
 
 
 def choose_items(goal: str, items: list[str]) -> list[str] | None:
