@@ -8,6 +8,14 @@ def pytest_addoption(parser):
     parser.addoption("--run-testnet", action="store_true", default=False, help="run live XRPL testnet tests")
 
 
+def pytest_ignore_collect(collection_path, config):
+    # Live modules resolve configured wallet roles at import time. Skip them before
+    # import so the default offline suite needs neither .env nor wallet credentials.
+    if collection_path.name.endswith("_testnet.py"):
+        return not (config.getoption("--run-testnet") or os.getenv("CEREAL_RUN_TESTNET") == "1")
+    return None
+
+
 def pytest_collection_modifyitems(config, items):
     if config.getoption("--run-testnet") or os.getenv("CEREAL_RUN_TESTNET") == "1":
         return

@@ -103,8 +103,12 @@ def test_manual_mode_ignores_api_button_choice(svc):
 def test_software_funding_when_device_funding_is_off(svc):
     service, calls, mp = svc
     mp.setattr(config, "DEVICE_FUNDING", False)
+    # Funding is mocked by svc; this unit test must not load a real treasury seed.
+    treasury = object()
+    mp.setattr(config, "wallet", lambda role: treasury if role == "TREASURY" else pytest.fail("unexpected wallet role"))
     r = service.deploy(service.DeployRequest(task="t", budget="1"))
     assert r["ok"] and calls["sign"] == [] and len(calls["software_fund"]) == 1 and "approval" not in r
+    assert calls["software_fund"][0][0] is treasury
 
 
 def test_recovery_signer_has_weight_to_meet_quorum_alone():
