@@ -42,3 +42,23 @@ def run_tool_loop(system: str, user: str, tools: dict[str, tuple[dict, Callable[
             results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(out, default=str)})
         messages.append({"role": "user", "content": results})
     return "max turns reached"
+
+
+def choose_items(goal: str, items: list[str]) -> list[str] | None:
+    """Ask Claude which catalog items the goal needs. It only names items; it never sets prices or budgets."""
+    import anthropic
+    client = anthropic.Anthropic()
+    tool = {"name": "choose_items", "description": "The catalog items needed to accomplish the goal.",
+            "input_schema": {"type": "object", "properties": {"items": {"type": "array", "items": {"type": "string",
+                             "enum": items}}}, "required": ["items"]}}
+    try:
+        resp = client.messages.create(model=MODEL, max_tokens=300, tools=[tool],
+                                      tool_choice={"type": "tool", "name": "choose_items"},
+                                      system="Pick only the catalog items the goal needs. Do not pick extras.",
+                                      messages=[{"role": "user", "content": f"Goal: {goal}\nCatalog items: {items}"}])
+        for block in resp.content:
+            if getattr(block, "type", "") == "tool_use":
+                return [i for i in block.input.get("items", []) if i in items]
+    except Exception:
+        return None
+    return None

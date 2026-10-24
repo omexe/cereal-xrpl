@@ -36,6 +36,8 @@ class DeployRequest(BaseModel):
     # Speculos demos only: which button the emulated owner presses (approve | reject). Ignored when a human is
     # driving the device (CEREAL_DEVICE_DECISION=manual); a real device always waits for its owner.
     speculos_decision: str | None = None
+    # Part 5: the quote-based plan behind this budget (chosen vendor and price, fallbacks, skipped vendors and why)
+    plan: dict | None = None
 
 
 class VendorIssueRequest(BaseModel):
@@ -120,6 +122,8 @@ def deploy(req: DeployRequest) -> dict:
             return _refuse("device_unavailable", speculos=config.SPECULOS_URL,
                            hint="start the device (docker start speculos-xrp) or set CEREAL_DEVICE_FUNDING=0")
         rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours, req.vendor_class)
+        if req.plan:
+            rec = deployments.update(rec["id"], plan=req.plan)
         sub_key = keystore.new_subagent_key(rec["id"])
         deployments.update(rec["id"], subagent=sub_key)
         sub = Wallet.create()  # the subwallet's address exists before anything is on-ledger, so the owner sees it
@@ -210,6 +214,8 @@ def close_ap4m_channel(dep_id: str) -> dict | None:
         return None
     added = reconcile_ap4m(dep_id)
     res = ap4m.close(channel)
+    if not res.get("ok") and ap4m.channel_state(channel).get("status") == 2:
+        res = {**res, "ok": True, "note": "closed on-chain; the service's reply was lost"}  # seen live: "fetch failed"
     if res.get("ok"):
         deployments.merge_hashes(dep_id, ap4m_close=res.get("tx_hash"))
         ap4m.forget_job(dep_id)

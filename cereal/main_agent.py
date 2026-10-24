@@ -45,13 +45,15 @@ class MainAgent:
         return _get("/main")
 
     def deploy_subagent(self, task: str, budget: str, allowed_payees: list[str] | None = None,
-                        speculos_decision: str | None = None) -> dict:
+                        speculos_decision: str | None = None, plan: dict | None = None) -> dict:
         """Deploy a subagent for one task into a new subwallet funded with exactly `budget` RLUSD.
 
         With a Ledger configured the owner approves the budget on the device first (this call waits for it)."""
         body = {"task": task, "budget": str(budget), "allowed_payees": allowed_payees or self.payees}
         if speculos_decision:
             body["speculos_decision"] = speculos_decision
+        if plan:
+            body["plan"] = plan
         return _post("/subagents", body, timeout=900)
 
     def start_subagent(self, deployment_id: str, task: str, payments: int = 2, extra: list[str] | None = None) -> dict:
@@ -123,6 +125,11 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
         r = _get(f"/subagents/{dep_id}")
         print(f"├─ subagent {r['subagent']}  [{r['status']}]  budget {r['budget']} RLUSD  task: {r['task']}")
         print(f"│  └─ subwallet {r['subwallet']}")
+        pl = r.get("plan")
+        if pl:
+            skipped = "; ".join(f"skipped {x['vendor']} ({x['reason']})" for x in pl.get("rejected", []))
+            print(f"│     plan     {pl['item']}: {pl['vendor']} at {pl['price']} RLUSD, budget {pl['budget']}"
+                  + (f"; {skipped}" if skipped else ""))
         h = r.get("hashes", {})
         print(f"│     activate {EXPLORER}/transactions/{h.get('activate')}")
         print(f"│     lock     " + ", ".join(x[:10] + "…" for x in h.get("lock", []) if x))
@@ -175,6 +182,48 @@ def _up(url: str) -> bool:
         return requests.get(f"{url}/health", timeout=3).ok
     except requests.RequestException:
         return False
+
+
+def _plan_record(line: dict) -> dict:
+    """What a deployment keeps about its plan: the choice, the fallbacks and what was skipped, with evidence."""
+    pick = line["chosen"]
+    return {"item": line["item"], "vendor": pick["vendor"], "url": pick["url"], "price": line["price"],
+            "budget": line["budget"],
+            "fallbacks": [{"vendor": f["vendor"], "url": f["url"], "price": f["quote"]["price"]} for f in line["fallbacks"]],
+            "rejected": [{"vendor": r["vendor"], "price": r["quote"].get("price") or r.get("catalog_price"),
+                          "reason": r["reason"], "evidence": (r.get("evidence") or {}).get("hash")} for r in line["rejected"]]}
+
+
+def shop(goal: str, envelope: Decimal) -> None:
+    """Part 5: plan from real quotes, then deploy one subagent per need with a budget sized to its quote."""
+    from . import pricing
+    before = _get("/main")
+    print(f"goal: {goal}\nenvelope: {envelope} RLUSD · main wallet {before['rlusd']} RLUSD · caps {before['caps']}\n")
+    p = pricing.plan(goal, envelope)
+    print("\n".join(pricing.summary(p)) + "\n")
+    if not p["ok"]:
+        sys.exit(f"no subagents deployed: {p['reason']}")
+    agent = MainAgent([], prove_lock=False)
+    ids = []
+    for line in p["lines"]:
+        rec = _plan_record(line)
+        r = agent.deploy_subagent(f"{goal}: {line['item']}", line["budget"], plan=rec)
+        print(f"deploy {line['budget']} RLUSD for {line['item']} → {r.get('id')} {r.get('subwallet')} "
+              f"{'ok' if r.get('ok') else r}")
+        if r.get("ok"):
+            ids.append(r["id"])
+            alts = "|".join([f"{rec['url']}@{rec['price']}"] + [f"{f['url']}@{f['price']}" for f in rec["fallbacks"]])
+            agent.start_subagent(r["id"], f"{goal}: {line['item']}", extra=["--buy", alts])
+    for d in ids:
+        w = agent.wait_subagent(d)
+        print(f"subagent {d} finished (exit {w['exit']})")
+    for d in ids:
+        rc = agent.reclaim_subagent(d)
+        print(f"reclaim {d}: returned {rc.get('returned')} RLUSD {'ok' if rc.get('ok') else rc}")
+    time.sleep(2)
+    print_tree(agent, ids, before, agent.main_wallet())
+    print(f"\nlocked {p['total']} of a {envelope} RLUSD envelope; an even split would have locked all of it")
+    print("retire the subwallets in ~15 minutes: make retire")
 
 
 def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lock: bool, beats: bool = False,
@@ -284,6 +333,8 @@ def main() -> None:
     ap.add_argument("--payee", action="append"); ap.add_argument("--prove-lock", action="store_true")
     ap.add_argument("--retire-all", action="store_true")
     ap.add_argument("--beats", action="store_true", help="Part 2 demo: revoked vendor, hijack, stolen keys")
+    ap.add_argument("--shop", action="store_true", help="Part 5: quote vendors first, buy from the cheapest trusted "
+                                                        "one, size each budget to its quote (one subagent per need)")
     ap.add_argument("--x402", action="store_true", help="Part 4 demo: subagents buy over x402 paywalls (t54); "
                                                         "vendor B's paywall is refused before any payment")
     ap.add_argument("--ap4m", action="store_true", help="Part 4b: each subagent also buys from the Mastercard AP4M "
@@ -293,6 +344,8 @@ def main() -> None:
     a = ap.parse_args()
     if a.retire_all:
         sys.exit(1 if retire_all() else 0)  # non-zero while some are still too young
+    if a.shop:
+        return shop(a.goal, Decimal(a.envelope))
     run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats, a.device, a.x402, a.ap4m)
 
 

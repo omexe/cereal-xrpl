@@ -38,6 +38,10 @@ SPECULOS_URL = os.getenv("SPECULOS_URL", "http://127.0.0.1:5000")
 X402_VENDOR_A_URL = os.getenv("X402_VENDOR_A_URL", "http://localhost:8000")
 X402_VENDOR_B_URL = os.getenv("X402_VENDOR_B_URL", "http://localhost:8002")
 AP4M_MERCHANT_URL = os.getenv("AP4M_MERCHANT_URL", "http://127.0.0.1:4308/resource")  # ap4m/merchant.mjs
+# Part 5 pricing: vendors whose catalogs the main agent reads before it sizes any budget
+VENDOR_URLS = [u.strip() for u in os.getenv("CEREAL_VENDORS", "http://localhost:8000,http://localhost:8002,http://localhost:8003").split(",") if u.strip()]
+PRICE_BUFFER_PCT = os.getenv("CEREAL_PRICE_BUFFER_PCT", "0.20")   # budget = quote + max(quote * pct, min)
+PRICE_BUFFER_MIN = os.getenv("CEREAL_PRICE_BUFFER_MIN", "0.05")
 # Mastercard AP4M is sidelined (built and verified, off by default): CEREAL_AP4M=1 on the service turns the rail on.
 AP4M_ENABLED = os.getenv("CEREAL_AP4M", "0") == "1"
 DEVICE_WINDOW_LEDGERS = int(os.getenv("CEREAL_DEVICE_WINDOW_LEDGERS", "150"))  # time for a human to press approve

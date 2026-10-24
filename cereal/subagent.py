@@ -188,11 +188,18 @@ def main() -> None:
     if a.prove_lock:
         emit("prove_lock", s.prove_lock())
     if (a.buy or a.ap4m) and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data
-        for url in a.buy:
-            r = s.buy(url, max_rlusd=s.budget_left()["remaining_rlusd"])
-            emit("refused" if r.get("refused") else "buy", {"resource": url, **{k: v for k, v in r.items() if k != "data"},
-                                                            "data_keys": sorted((r.get("data") or {}).keys())
-                                                            if isinstance(r.get("data"), dict) else None})
+        for spec in a.buy:  # "url" or "url@max|fallback_url@max": alternatives in the plan's order
+            for alt in spec.split("|"):
+                url, _, cap = alt.partition("@")
+                left = Decimal(str(s.budget_left()["remaining_rlusd"] or "0"))
+                limit = min(Decimal(cap), left) if cap else left
+                r = s.buy(url, max_rlusd=str(limit))
+                emit("refused" if r.get("refused") else "buy", {"resource": url, "limit": str(limit),
+                                                                **{k: v for k, v in r.items() if k != "data"},
+                                                                "data_keys": sorted((r.get("data") or {}).keys())
+                                                                if isinstance(r.get("data"), dict) else None})
+                if r.get("ok"):
+                    break
         for url in a.ap4m:  # the second rail: Mastercard AP4M on XRPL EVM, same budget
             r = s.buy_ap4m(url)
             emit("refused" if not r.get("ok") else "buy_ap4m",
