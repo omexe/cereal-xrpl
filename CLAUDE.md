@@ -30,7 +30,7 @@ disposable, budget-exact wallets for AI agents, written in one plain-English sen
 
 ## layout
 - `cereal/` python package: `ledger.py` (client, fee/LLS, memos, submit), `lock.py`, `fund.py`, `pay.py`, `vendors.py`, `cosign.py` (FastAPI), `burn.py`, `export.py`, `compiler.py` (sentence → card; the agent never calls it), `agent.py` (tools `check_vendor`, `pay_vendor`, `budget_left`).
-- `x402/server.py` VENDOR_A's paid endpoint (planted instruction in its response), `x402/client.py` reference payer.
+- `x402/server.py` a vendor's x402 paywall (RLUSD as the 40-hex code, settled by the t54 facilitator; `make vendor` = A on :8000, `make vendor-b` = revoked B on :8002); subagents pay it with `Subagent.buy` (cereal co-signs in present mode). `x402/client.py` is the single-wallet reference payer. `ap4m/` is the Mastercard AP4M rail (Node, XRPL EVM), built from `docs/briefs/GEMINI-AP4M.md`.
 - `ledger/` node: DMK + Speculos multisign signer (`multisign.ts sign` → one JSON line with the Signer entry and what the device screen showed); `cereal/device.py` drives it, `cereal/recover.py` is the owner's device-only recovery.
 - `scripts/` `new_wallet.py`, `send_payment.py`, `setup_pool.py`.
 - `web/` job card, payment feed, decline card, burn, export; webhook endpoint for QuickNode.

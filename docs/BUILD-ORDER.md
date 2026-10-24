@@ -7,7 +7,7 @@ Build one part at a time. A part is done when its acceptance checks pass on test
 | **1** | **Main agent on the main wallet deploys subagents into subwallets** | **done**: verified on testnet Oct 24 (hashes below), including retire |
 | **2** | **Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats** | **done**: wired into the co-sign policy and the main agent flow; beats verified on testnet Oct 24 (hashes below) |
 | **3** | **Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet** | **done**: wired into deploy, the main agent and recovery; acceptance passed on testnet with Speculos Oct 24 (hashes below) |
-| 4 | Payment rails: x402 via t54 (+ Verifiable Intent) and Mastercard AP4M on XRPL EVM | not built |
+| **4** | **Payment rails: x402 via t54 (+ Verifiable Intent) and Mastercard AP4M on XRPL EVM** | **x402 done** (testnet Oct 24, hashes below); AP4M built in `ap4m/`, waiting on the agent key and XRPL EVM gas; Verifiable Intent not started |
 | 5 | Accounting and visibility: tags, export, QuickNode webhook feed, dashboard | export built; webhook and dashboard not built |
 | 6 | Submission: demo script, README, HACKATHON.md, video, answers | not built |
 
@@ -131,9 +131,30 @@ The main agent asks for an extra subagent and the owner rejects it on the device
 
 **Boundary, said plainly.** On testnet the main wallet keeps its software key so teammates without the device can run the service; the device is a signer on it (quorum 1). In production the main wallet's master key is disabled and its signer list is {Ledger}, so no budget moves without the device. The activation XRP (refundable reserve, ~1.9 XRP) is software-signed; the device approves the RLUSD budget.
 
-## Part 4 — payment rails (after Part 3)
-- **x402 via t54:** subagents buy from vendor A's paid endpoint (`x402/server.py`); test whether the facilitator accepts the subwallet's multisigned payment, else submit directly and send the hash; attach a Verifiable Intent chain (`docs/INTEGRATIONS.md` §2).
-- **Mastercard AP4M:** one AP4M Channel per subagent (`capRlusd` = subagent budget) to the vendor's Merchant on XRPL EVM testnet; the subagent pays a 402 with signed vouchers; settlement and receipts recorded (`docs/SPEC.md` Part 4). Portal onboarding first.
+## Part 4 — payment rails: subagents pay paywalls
+**What it proves.** A subagent meets an HTTP 402, decides to pay, and pays it from its 2-of-2 subwallet with no human in the loop: cereal runs the same policy as for any payment (credentialed vendor, RLUSD only, within balance, unexpired), co-signs, and the vendor's x402 facilitator settles it on-ledger. A revoked vendor's paywall is refused before anything is signed for it.
+
+### p4.1 Present mode in the co-signer — `POST /cosign {present: true}`  ✅
+Same policy, then cereal adds its signature and returns `{hash, blob}` instead of submitting; the payment is recorded `rail: x402, result: presented` and resolved from the ledger when the deployment is read. Policy now also refuses anything but a plain exact RLUSD payment: `partial_payment_not_allowed`, `paths_not_allowed`, `send_max_not_allowed` (x402 sets SendMax; it may not exceed the Amount).
+
+### p4.2 `Subagent.buy(url)` — `cereal/subagent.py`, `cereal/pay.py`  ✅
+GET → 402 → pick the `exact` / `xrpl:1` / RLUSD (40-hex, real issuer) option, else `no_rlusd_option` → price over the limit: `price_above_limit` → build the Payment the x402-xrpl payer would (SendMax = Amount, InvoiceID, invoice memo, SourceTag) with cereal's memo first → sign as the subagent → cereal co-signs (present) → `PAYMENT-SIGNATURE` header → 200 + `PAYMENT-RESPONSE` (t54 attestation). On the vendor's `409 settlement_status_unknown`, confirm on-ledger and re-present once; still unserved: `paid_not_served` with the validated hash. CLI: `python -m cereal.subagent <id> "<task>" --buy <url> …`.
+
+### p4.3 Vendors' paywalls and the main agent — `x402/server.py`, `make x402`  ✅
+Vendor A charges 0.25 RLUSD per request on `/swell/agenda` and `/swell/speakers` (`make vendor`, :8000); vendor B, revoked, runs the same paywall on :8002 (`make vendor-b`). `make x402`: subagent 1 meets B's paywall first (refused with the revocation), then buys both resources from A; subagent 2 buys both; reclaim; reconcile.
+
+### p4.4 Mastercard AP4M — `ap4m/` (Gemini, from `docs/briefs/GEMINI-AP4M.md`)
+Built: merchant (`merchant.mjs`), agent CLI (`pay.mjs --resource --amount --cap --job --tag` → one JSON line), receipt verifier, `ap4m/EVIDENCE.md` with the registered on-chain state. Blocked on two human steps (`ap4m/BLOCKERS.md`): the agent wallet's private key in `ap4m/.env`, and XRPL EVM testnet XRP for gas (https://faucet.xrplevm.org; the portal's faucet host does not resolve). Then: call `pay.mjs` from `Subagent` as a second rail.
+
+### p4.5 Part 4 tests and record
+`tests/test_part4.py` (offline, 11): RLUSD option picking (no symbol, no look-alike issuer, no mainnet), memo order and invoice binding, present mode never submits, payment-shape refusals, ledger resolution, buy's price limit, refusals pass through without presenting, the 409 retry. `tests/test_part4_testnet.py` (live, opt-in).
+
+**Part 4 x402, verified on testnet Sat Oct 24 (facilitator https://xrpl-facilitator-testnet.t54.ai):**
+| Check | Evidence |
+|---|---|
+| t54 accepts a 2-of-2 subwallet payment | `6AB99AF9…` (probe): settled, resource served, `t54Attestation` returned |
+| `make x402` | d_e94725: approved on Ledger, device-only funding `9CC32A3B…`; vendor B's paywall refused (revocation `3FF46EE4…`); bought agenda `3E9FDF0D…` and speakers `A2E6DE13…`. d_e51b8c: funding `CF3AED22…`; agenda `A00477CD…`, speakers `49DB5D5A…`. Main wallet 14.9977 → 13.9977 RLUSD = the four 0.25 payments, reconciled |
+| `make acceptance` Part 4 (own service :8014, vendor A paywall :8010, revoked vendor B paywall :8016) | passed Oct 24 in 1 min 52 s: paid A's paywall `5417BD92…` (t54 attestation `ready`); this run hit `409 settlement_status_unknown`, confirmed on-ledger and re-presented, resource served; on-ledger Signers = {subagent, cereal}, `SigningPubKey ""`, InvoiceID bound, cereal memo first; record resolved to `tesSUCCESS`; B's paywall refused with revocation `3FF46EE4…` and the subwallet's Sequence unchanged; `price_above_limit` sent nothing; main wallet −0.25 RLUSD. Evidence JSON in `exports/` |
 
 ## Part 5 — accounting and visibility (after Part 4)
 Tags (hmac of team/project/task) on every memo, `cereal/export.py` CSV across subwallets and AP4M receipts (built), QuickNode endpoint and one webhook feeding the payment list, and a dashboard showing the tree main → subagents → payments.
