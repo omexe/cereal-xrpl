@@ -21,8 +21,12 @@ def svc(tmp_path, monkeypatch):
         "ok": True, "rail": "ap4m", "amount": "0.25", "channel_id": "0xch", "redeem_tx": "0xredeem",
         "explorer": "https://explorer.testnet.xrplevm.org/tx/0xredeem", "merchant_payout": "0xpayout",
         "receipt_id": "https://r", "payout_tx": "0xpay"})
+    chain = {"redemptions": [{"tx": "0xredeem", "amount": "0.25", "cumulative": "0.25", "payout": "0xpayout"}]}
+    monkeypatch.setattr(ap4m, "channel_state", lambda ch, **k: {"ok": True, "channel_id": ch, **chain})
+    monkeypatch.setattr(ap4m, "channel_for_job", lambda job: "0xch")
     d = deployments.create("t", "1", [])
     rec = deployments.update(d["id"], status="active", subwallet=SUB)
+    service._chain = chain  # tests edit what the chain shows
     return service, rec, calls, monkeypatch
 
 
@@ -61,6 +65,7 @@ def test_inactive_or_unavailable_rail_is_refused_before_paying(svc):
 
 def test_a_refusal_from_the_rail_is_recorded_not_counted(svc):
     service, rec, calls, mp = svc
+    service._chain["redemptions"] = []  # nothing redeemed on-chain
     mp.setattr(ap4m, "pay", lambda *a, **k: {"ok": False, "rail": "ap4m", "refused": "over_cap"})
     r = service.pay_ap4m(rec["id"], service.Ap4mRequest(resource=URL))
     assert r["refused"] == "over_cap"
@@ -75,3 +80,20 @@ def test_ap4m_pay_parses_the_last_json_line(monkeypatch):
         stderr = ""
     monkeypatch.setattr(ap4m.subprocess, "run", lambda *a, **k: P())
     assert ap4m.pay(URL, "0.25", "1", "d_x", "t")["amount"] == "0.25"
+
+
+def test_a_crash_after_redemption_is_still_recorded_from_the_chain(svc):
+    """Seen live Oct 24: the voucher was redeemed (0x911de0c0…) but pay.mjs failed afterwards. The ledger decides."""
+    service, rec, calls, mp = svc
+    mp.setattr(ap4m, "pay", lambda *a, **k: {"ok": False, "rail": "ap4m", "refused": "ap4m_error"})
+    r = service.pay_ap4m(rec["id"], service.Ap4mRequest(resource=URL))
+    assert r["recorded"] and r["recorded"][0]["hash"] == "0xredeem" and r["recorded"][0]["source"] == "chain"
+    d = deployments.get(rec["id"])
+    assert service.ap4m_spent(d) == Decimal("0.25") and not d.get("refusals")
+
+
+def test_reconcile_is_idempotent(svc):
+    service, rec, calls, _ = svc
+    assert len(service.ap4m_reconcile(rec["id"])["added"]) == 1
+    assert service.ap4m_reconcile(rec["id"])["added"] == []
+    assert service.ap4m_spent(deployments.get(rec["id"])) == Decimal("0.25")

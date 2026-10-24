@@ -314,16 +314,49 @@ def pay_ap4m(dep_id: str, req: Ap4mRequest) -> dict:
                                                 "at": datetime.now(timezone.utc).isoformat()})
         return refused
     out = ap4m.pay(req.resource, req.max_rlusd, rec["budget"], rec["id"], rec["tag"])
-    entry = {"rail": "ap4m", "resource": req.resource, "to": out.get("merchant_payout") or "ap4m-merchant",
-             "amount": out.get("amount") or req.max_rlusd, "ok": bool(out.get("ok")),
-             "result": "redeemed" if out.get("ok") else out.get("refused"), "hash": out.get("redeem_tx"),
-             "explorer": out.get("explorer"), "channel_id": out.get("channel_id"), "receipt": out.get("receipt_id"),
-             "payout_tx": out.get("payout_tx"), "at": datetime.now(timezone.utc).isoformat()}
-    if out.get("ok"):
+    recorded = reconcile_ap4m(dep_id, out, req.resource)
+    if not out.get("ok") and not recorded:
+        deployments.record_refusal(dep_id, {"payee": req.resource, "rail": "ap4m", "resource": req.resource,
+                                            "refused": out.get("refused"), "error": str(out.get("error") or "")[:300],
+                                            "channel_id": out.get("channel_id"), "at": datetime.now(timezone.utc).isoformat()})
+    return {**out, "recorded": recorded}
+
+
+def reconcile_ap4m(dep_id: str, out: dict | None = None, resource: str | None = None) -> list[dict]:
+    """Record what the subagent's AP4M Channel actually redeemed on-chain, whatever pay.mjs reported.
+
+    The ledger is the truth (as for x402): a crash after a voucher was redeemed can never hide a payment."""
+    out = out or {}
+    rec = deployments.get(dep_id)
+    channel = out.get("channel_id") or ap4m.channel_for_job(dep_id)
+    if not rec or not channel:
+        return []
+    st = ap4m.channel_state(channel)
+    if not st.get("ok"):
+        return []
+    known = {p.get("hash") for p in rec.get("payments", []) if p.get("rail") == "ap4m"}
+    added = []
+    for r in st.get("redemptions", []):
+        if r["tx"] in known:
+            continue
+        entry = {"rail": "ap4m", "resource": resource or out.get("resource_url"), "to": r.get("payout"),
+                 "amount": r["amount"], "ok": True, "result": "redeemed", "hash": r["tx"],
+                 "explorer": f"https://explorer.testnet.xrplevm.org/tx/{r['tx']}", "channel_id": channel,
+                 "receipt": out.get("receipt_id") if out.get("redeem_tx") == r["tx"] else None,
+                 "source": "pay.mjs" if out.get("redeem_tx") == r["tx"] else "chain",
+                 "at": datetime.now(timezone.utc).isoformat()}
         deployments.record_payment(dep_id, entry)
-    else:
-        deployments.record_refusal(dep_id, {"payee": req.resource, **entry, "refused": out.get("refused")})
-    return out
+        added.append(entry)
+    return added
+
+
+@app.post("/subagents/{dep_id}/ap4m/reconcile")
+def ap4m_reconcile(dep_id: str) -> dict:
+    """Read the subagent's AP4M Channel on-chain and record any redemption cereal has not recorded yet."""
+    if not deployments.get(dep_id):
+        raise HTTPException(404, "unknown deployment")
+    added = reconcile_ap4m(dep_id)
+    return {"ok": True, "added": added, "ap4m_spent": str(ap4m_spent(deployments.get(dep_id)))}
 
 
 @app.post("/cosign")

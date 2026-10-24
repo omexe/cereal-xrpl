@@ -38,3 +38,21 @@ def pay(resource: str, max_rlusd: str, cap: str, job: str, tag: str, timeout: in
             except ValueError:
                 break
     return {"ok": False, "rail": "ap4m", "refused": "ap4m_error", "error": (p.stderr or p.stdout)[-300:]}
+
+
+def channel_for_job(job: str) -> str | None:
+    """The Channel pay.mjs opened for this subagent (ap4m/agent-state/cereal-channels.json; ids only, no secrets)."""
+    try:
+        return json.loads((AP4M_DIR / "agent-state" / "cereal-channels.json").read_text())["channelsByJob"].get(job)
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+def channel_state(channel_id: str, timeout: int = 120) -> dict:
+    """The Channel's on-chain state from PaymentLedger: redeemed total, cap, status and its VoucherRedeemed events."""
+    try:
+        p = subprocess.run(["node", str(AP4M_DIR / "channel.mjs"), channel_id], capture_output=True, text=True,
+                           timeout=timeout, cwd=str(AP4M_DIR))
+        return json.loads(p.stdout.strip().splitlines()[-1])
+    except (subprocess.TimeoutExpired, ValueError, IndexError) as e:
+        return {"ok": False, "error": str(e)}

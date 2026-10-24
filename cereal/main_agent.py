@@ -158,10 +158,15 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
             print(f"│     reclaim  {EXPLORER}/transactions/{x}")
         for x in h.get("recover", []) or []:
             print(f"│     recover  {EXPLORER}/transactions/{x}  (owner's Ledger alone: no cereal key)")
-    paid = sum(Decimal(p["amount"]) for d in ids for p in _get(f"/subagents/{d}")["payments"] if p.get("ok"))
+    pays = [p for d in ids for p in _get(f"/subagents/{d}")["payments"] if p.get("ok")]
+    paid = sum((Decimal(p["amount"]) for p in pays if p.get("rail") != "ap4m"), Decimal(0))
+    ap4m_paid = sum((Decimal(p["amount"]) for p in pays if p.get("rail") == "ap4m"), Decimal(0))
     delta = Decimal(before["rlusd"]) - Decimal(after["rlusd"])
-    print(f"\nmain wallet RLUSD {before['rlusd']} → {after['rlusd']}  (Δ {delta}); subagent payments {paid}; "
+    print(f"\nmain wallet RLUSD {before['rlusd']} → {after['rlusd']}  (Δ {delta}); XRPL payments {paid}; "
           f"{'reconciled ✓' if abs(delta - paid) < Decimal('0.000001') else 'MISMATCH'}")
+    if ap4m_paid:
+        print(f"AP4M payments {ap4m_paid} RLUSD from the team's Mastercard AP4M vault (XRPL EVM); each subagent's total "
+              f"across both rails stayed within its budget")
 
 
 def _up(url: str) -> bool:

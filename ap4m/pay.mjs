@@ -154,6 +154,7 @@ async function main() {
   let channelId = String(values.channel || process.env.CHANNEL_ID || (job && stateIndex.channelsByJob?.[job]) || '');
   let channelPayout = process.env.MERCHANT_PAYOUT || '0x4a7e1cf40ea929ff5bec4d76b060506f3fe59c44';
 
+  let freshChannel = false;
   const openChannels = await listChannels(apiUrl, token);
   const nowSec = Math.floor(Date.now() / 1000);
 
@@ -191,6 +192,7 @@ async function main() {
         message: 'Agent wallet holds 0 XRP on XRPL EVM Testnet and cannot send the vault transaction to open a Channel.',
       });
     }
+    freshChannel = true;
     const created = await requestChannel(apiUrl, token, agentWallet, {
       capRlusd: capStr,
       merchantId,
@@ -205,10 +207,29 @@ async function main() {
     saveStateIndex(baseStateDir, stateIndex);
   }
 
+  // An unfinished purchase for this job (voucher signed and presented, outcome never confirmed) is resumed with its
+  // original arguments: the kit re-presents the SAME signed voucher, so this can never pay twice.
+  const subagentStateDir = join(baseStateDir, job ? `job-${job.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default');
+  let resumeOperation = null;
+  try {
+    const retained = JSON.parse(readFileSync(join(subagentStateDir, 'purchase.json'), 'utf8'));
+    if (retained && retained.complete === false) {
+      const it = retained.intent || {};
+      if (it.resourceUrl === resourceUrl && String(it.channelId).toLowerCase() === channelId.toLowerCase()
+          && BigInt(it.maximumAmount) === amountWei) {
+        resumeOperation = it.operation;
+      } else {
+        return refuse('unresolved_purchase', { channel_id: channelId, operation: it.operation, resource: it.resourceUrl,
+          max_amount: ethers.formatUnits(BigInt(it.maximumAmount || 0), 18),
+          message: 'resume the unfinished purchase with its original --resource and --amount first' });
+      }
+    }
+  } catch { /* no retained purchase */ }
+
   // Check on-chain channel state & enforce cap before signing any voucher
   const stateBefore = await getChannelState(provider, ledgerAddress, channelId);
   const effectiveCapWei = stateBefore.cap < capWei ? stateBefore.cap : capWei;
-  if (stateBefore.redeemed + amountWei > effectiveCapWei) {
+  if (!resumeOperation && stateBefore.redeemed + amountWei > effectiveCapWei) {
     return refuse('over_cap', {
       channel_id: channelId,
       amount: amountStr,
@@ -224,25 +245,41 @@ async function main() {
 
   stateIndex.purchaseSeq = Number(stateIndex.purchaseSeq || 0) + 1;
   saveStateIndex(baseStateDir, stateIndex);
-  const operation = values.operation
+  const operation = resumeOperation || (values.operation
     ? String(values.operation)
-    : buildOperationName(job, tag, `${Date.now()}-${stateIndex.purchaseSeq}`);
-
-  const subagentStateDir = join(baseStateDir, job ? `job-${job.replace(/[^a-zA-Z0-9_-]/g, '_')}` : 'default');
+    : buildOperationName(job, tag, `${Date.now()}-${stateIndex.purchaseSeq}`));
 
   let purchase;
-  try {
-    purchase = await buyResource({
-      context,
-      provider,
-      wallet: agentWallet,
-      stateDirectory: subagentStateDir,
-      resourceUrl,
-      channelId,
-      maximumAmount: amountWei.toString(),
-      operation,
-    });
-  } catch (err) {
+  const RETRYABLE = /retry the same operation|resume the same operation|managed open binding|chain_head_stale|HTTP 5\d\d|HTTP 409/i;
+  let attempts = 0;
+  for (;;) {
+    attempts += 1;
+    try {
+      purchase = await buyResource({
+        context,
+        provider,
+        wallet: agentWallet,
+        stateDirectory: subagentStateDir,
+        resourceUrl,
+        channelId,
+        maximumAmount: amountWei.toString(),
+        operation,
+      });
+      break;
+    } catch (err) {
+      const msg = err?.message ?? String(err);
+      // A Channel opened seconds ago is not yet in the finalized block the challenge is checked against.
+      const notFinalYet = freshChannel && /exceeds the configured purchase authority|Merchant must return an x402/i.test(msg);
+      if (attempts < 12 && (RETRYABLE.test(msg) || (notFinalYet && attempts < 8))) {
+        await new Promise((r) => setTimeout(r, 6000));
+        continue;
+      }
+      purchase = { error: err };
+      break;
+    }
+  }
+  if (purchase.error) {
+    const err = purchase.error;
     const msg = err?.message ?? String(err);
     if (/exceeds the configured purchase authority/i.test(msg)) {
       return refuse('over_cap', {
@@ -258,6 +295,7 @@ async function main() {
     return refuse('x402_purchase_failed', {
       channel_id: channelId,
       operation,
+      attempts,
       job: job || null,
       tag: tag || null,
       error: msg,
@@ -272,16 +310,17 @@ async function main() {
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
     body: JSON.stringify({ tx_hash: purchase.transactionHash }),
   });
+  const warnings = [];
   if (!recordResp.ok) {
     const errBody = await recordResp.json().catch(() => ({}));
-    return refuse('record_redemption_failed', {
-      channel_id: channelId,
-      redeem_tx: purchase.transactionHash,
-      error: errBody?.error ?? recordResp.status,
-    });
+    warnings.push(`record_redemption_failed: ${errBody?.error ?? recordResp.status}`);
   }
 
-  const settled = await settle(apiUrl, token, channelId);
+  // The voucher is redeemed on-chain at this point: money has moved. Settlement only releases it to the payout
+  // wallet, and the service also settles on its own, so a failure here is a warning, never a refusal.
+  let settled = {};
+  try { settled = await settle(apiUrl, token, channelId); }
+  catch (err) { warnings.push(`settle_pending: ${err?.message ?? String(err)}`); }
   const payoutBalanceAfter = await rlusdToken.balanceOf(channelPayout);
   const payoutDeltaWei = payoutBalanceAfter - payoutBalanceBefore;
 
@@ -317,6 +356,10 @@ async function main() {
     job: job || null,
     tag: tag || null,
     operation,
+    attempts,
+    resumed: Boolean(resumeOperation),
+    settled: Boolean(settled.settlement_tx || settled.payout_tx || settled.receipt_url),
+    ...(warnings.length ? { warnings } : {}),
     resource: purchase.resource ?? null,
     ...(closedTx ? { close_tx: closedTx } : {}),
   }, 0);
