@@ -149,7 +149,8 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
                 print(f"│     refused  {f['payee'][:10]}… vendor {v.get('status')}: {(v.get('revocation') or {}).get('reason', '')} "
                       f"(public revocation {EXPLORER}/transactions/{ev})")
         for p in r["payments"]:
-            print(f"│     pay {p['amount']} → {p['to'][:10]}…  {p.get('result')}  {EXPLORER}/transactions/{p.get('hash')}")
+            via = f"x402 {p['resource'].split('//')[-1].split('/', 1)[-1]}" if p.get("rail") == "x402" and p.get("resource") else "pay"
+            print(f"│     {via} {p['amount']} → {p['to'][:10]}…  {p.get('result')}  {EXPLORER}/transactions/{p.get('hash')}")
         for x in h.get("reclaim", []) or []:
             print(f"│     reclaim  {EXPLORER}/transactions/{x}")
         for x in h.get("recover", []) or []:
@@ -160,8 +161,15 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
           f"{'reconciled ✓' if abs(delta - paid) < Decimal('0.000001') else 'MISMATCH'}")
 
 
+def _up(url: str) -> bool:
+    try:
+        return requests.get(f"{url}/health", timeout=3).ok
+    except requests.RequestException:
+        return False
+
+
 def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lock: bool, beats: bool = False,
-        device_beats: bool = False) -> None:
+        device_beats: bool = False, x402: bool = False) -> None:
     before = _get("/main")
     if payees is None:  # Part 2: any vendor credentialed on-ledger; Part 1: allowlist vendor A
         payees = [] if before.get("policy", {}).get("vendor_credentials") else [config.address("VENDOR_A")]
@@ -171,6 +179,8 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
     rejected: list[dict] = []
     if device_beats and not before.get("policy", {}).get("device_funding"):
         sys.exit("--device needs the Ledger configured: LEDGER_ADDRESS set and CEREAL_DEVICE_FUNDING not 0")
+    if x402 and not _up(config.X402_VENDOR_A_URL):
+        sys.exit(f"--x402 needs vendor A's paywall at {config.X402_VENDOR_A_URL} (make vendor)")
     if device_beats:  # the main agent asks for one budget too many; the owner says no on the device
         r = agent.deploy_subagent(f"{goal} (an extra subagent the owner did not ask for)", "1", speculos_decision="reject")
         print(f"deploy 1 RLUSD → owner {r.get('refused')} on the Ledger; transactions sent: {r.get('sent_transactions')}")
@@ -210,6 +220,12 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
                     extra = ["--vendors", f"{config.address('VENDOR_B')},{config.address('VENDOR_A')}"]
                 if beats and i == 1:  # receives a prompt-injected instruction after its purchases
                     extra = ["--hijack"]
+                if x402:  # Part 4: buy over x402 paywalls; subagent 1 meets the revoked vendor's paywall first
+                    a_url = config.X402_VENDOR_A_URL
+                    urls = [f"{a_url}/swell/agenda", f"{a_url}/swell/speakers"]
+                    if i == 0 and _up(config.X402_VENDOR_B_URL):
+                        urls.insert(0, f"{config.X402_VENDOR_B_URL}/swell/agenda")
+                    extra = [x for u in urls for x in ("--buy", u)]
                 agent.start_subagent(r["id"], task, extra=extra)
         for d in ids:
             w = agent.wait_subagent(d)
@@ -253,12 +269,14 @@ def main() -> None:
     ap.add_argument("--payee", action="append"); ap.add_argument("--prove-lock", action="store_true")
     ap.add_argument("--retire-all", action="store_true")
     ap.add_argument("--beats", action="store_true", help="Part 2 demo: revoked vendor, hijack, stolen keys")
+    ap.add_argument("--x402", action="store_true", help="Part 4 demo: subagents buy over x402 paywalls (t54); "
+                                                        "vendor B's paywall is refused before any payment")
     ap.add_argument("--device", action="store_true", help="Part 3 demo: owner rejects one budget on the Ledger, "
                                                           "approves the rest, recovers one subwallet alone")
     a = ap.parse_args()
     if a.retire_all:
         sys.exit(1 if retire_all() else 0)  # non-zero while some are still too young
-    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats, a.device)
+    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats, a.device, a.x402)
 
 
 if __name__ == "__main__":

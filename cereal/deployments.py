@@ -89,6 +89,14 @@ def record_payment(dep_id: str, entry: dict) -> None:
         d = _load(); d[dep_id]["payments"].append(entry); _save(d)
 
 
+def update_payment(dep_id: str, tx_hash: str, **fields) -> None:
+    d = _load()
+    for pmt in d[dep_id].get("payments", []):
+        if pmt.get("hash") == tx_hash:
+            pmt.update(fields)
+    _save(d)
+
+
 def record_refusal(dep_id: str, entry: dict) -> None:
     with _lock:
         d = _load()

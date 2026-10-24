@@ -138,13 +138,18 @@ def multisign_submit(tx: Transaction, signers: list[Wallet], c: JsonRpcClient, *
     return submit_capture(multisign(filled, parts), c, **kw)
 
 
-def cosign_and_submit(agent_signed: Transaction, cosigner: Wallet, c: JsonRpcClient) -> dict:
-    """Take a transaction the agent already signed as a multisig signer, add cereal's signature, submit."""
+def cosign_combine(agent_signed: Transaction, cosigner: Wallet) -> Transaction:
+    """Add cereal's multisig signature to a transaction the agent already signed; return the combined transaction."""
     d = agent_signed.to_dict()
     d.pop("signers", None)
     base = Transaction.from_dict(d)
     ours = sign(base, cosigner, multisign=True)
-    return submit_capture(multisign(base, [agent_signed, ours]), c)
+    return multisign(base, [agent_signed, ours])
+
+
+def cosign_and_submit(agent_signed: Transaction, cosigner: Wallet, c: JsonRpcClient) -> dict:
+    """Take a transaction the agent already signed as a multisig signer, add cereal's signature, submit."""
+    return submit_capture(cosign_combine(agent_signed, cosigner), c)
 
 
 # ---- reads ----------------------------------------------------------------------------------

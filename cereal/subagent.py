@@ -1,6 +1,7 @@
 """p1.5 — a subagent: one task, one budget, one key, one subwallet. Runs as its own process.
 
     python -m cereal.subagent <deployment_id> "<task>" [--payments 2] [--amount 0.25] [--prove-lock]
+    python -m cereal.subagent <deployment_id> "<task>" --buy <url> [--buy <url> …]     # Part 4: pay x402 paywalls
 
 It loads only its own key (keys/subagents/<id>.json), talks to the cereal service for its record and for every
 co-signature, and can never sign alone (a solo submit is refused by the ledger with tefBAD_QUORUM).
@@ -17,7 +18,7 @@ import requests
 
 from . import config, keystore, llm
 from .ledger import client, multisign_submit
-from .pay import agent_sign, build_payment, request_cosign
+from .pay import agent_sign, build_payment, build_x402_payment, pick_rlusd_requirement, request_cosign
 
 
 class Subagent:
@@ -42,6 +43,51 @@ class Subagent:
         return request_cosign(self.dep_id, agent_sign(tx, self.key, self.c),
                               url=f"{config.SERVICE_URL}/cosign", deployment=True)
 
+    def buy(self, url: str, max_rlusd: str | None = None) -> dict:
+        """Get a resource behind an x402 paywall. On a 402 I pay its exact RLUSD price from my subwallet (cereal checks
+        the vendor and co-signs; the vendor's facilitator settles on-ledger) and return the resource."""
+        from x402_xrpl.client.presigned_payment_payer import build_payment_header_for_signed_blob
+        from x402_xrpl.clients import decode_payment_response
+        from x402_xrpl.types import ResourceInfo
+        first = requests.get(url, timeout=30)
+        if first.status_code != 402:
+            return {"ok": first.ok, "status": first.status_code, "paid": False, "data": _body(first)}
+        body = first.json()
+        req = pick_rlusd_requirement(body)
+        if req is None:
+            return {"ok": False, "refused": "no_rlusd_option", "accepts": body.get("accepts")}
+        if max_rlusd is not None and Decimal(str(req.amount)) > Decimal(str(max_rlusd)):
+            return {"ok": False, "refused": "price_above_limit", "price": str(req.amount), "limit": str(max_rlusd)}
+        r = self.record()
+        tx = build_x402_payment(r["subwallet"], req, self.dep_id, r["tag"])
+        co = requests.post(f"{config.SERVICE_URL}/cosign", timeout=90, json={
+            "deployment_id": self.dep_id, "tx": agent_sign(tx, self.key, self.c).to_xrpl(), "present": True,
+            "resource": url}).json()
+        if not co.get("ok"):
+            return {"ok": False, "price": str(req.amount), "payee": req.pay_to, **co}
+        header = build_payment_header_for_signed_blob(
+            req=req, signed_tx_blob=co["blob"], invoice_id=req.invoice_id(),
+            resource=ResourceInfo.from_dict(body["resource"]) if isinstance(body.get("resource"), dict) else None)
+        paid = requests.get(url, headers={"PAYMENT-SIGNATURE": header}, timeout=180)
+        retried = False
+        if paid.status_code == 409 and _validated(self.c, co["hash"]) == "tesSUCCESS":
+            # t54 submitted but could not confirm in time ("settlement_status_unknown"); the ledger says it settled,
+            # so present the same payment once more for the resource.
+            paid = requests.get(url, headers={"PAYMENT-SIGNATURE": header}, timeout=180)
+            retried = True
+        settlement = decode_payment_response(paid.headers["PAYMENT-RESPONSE"]) if "PAYMENT-RESPONSE" in paid.headers else None
+        ok = paid.status_code == 200 and bool(settlement and settlement.get("success"))
+        out = {"ok": ok, "status": paid.status_code, "price": str(req.amount), "payee": req.pay_to, "hash": co["hash"],
+               "explorer": f"{config.EXPLORER}/transactions/{co['hash']}", "data": _body(paid) if ok else None,
+               "settlement": settlement}
+        if retried:
+            out["retried_after_409"] = True
+        if not ok:
+            out["error"] = _body(paid)
+            if _validated(self.c, co["hash"]) == "tesSUCCESS":
+                out["refused"] = "paid_not_served"  # evidence: the validated payment; the vendor owes the resource
+        return out
+
     def done(self, summary: str) -> dict:
         """Report that my task is finished, with a one-line summary."""
         return requests.post(f"{config.SERVICE_URL}/subagents/{self.dep_id}/done", json={"summary": summary},
@@ -53,6 +99,28 @@ class Subagent:
         payee = (r["allowed_payees"] or [config.address("VENDOR_A")])[0]  # Part 2 allowlists may be empty
         tx = build_payment(r["subwallet"], payee, "0.01", self.dep_id, r["tag"])
         return multisign_submit(tx, [self.key], self.c, quorum_signers=2)
+
+
+def _validated(c, tx_hash: str, wait_s: int = 30) -> str | None:
+    """The payment's validated result from the ledger (polls briefly), or None if not validated yet."""
+    import time
+    from xrpl.models.requests import Tx
+    for _ in range(wait_s):
+        try:
+            r = c.request(Tx(transaction=tx_hash)).result
+            if r.get("validated"):
+                return r.get("meta", {}).get("TransactionResult")
+        except Exception:
+            pass
+        time.sleep(1)
+    return None
+
+
+def _body(resp):
+    try:
+        return resp.json()
+    except ValueError:
+        return resp.text[:500]
 
 
 def emit(event: str, data) -> None:
@@ -101,6 +169,7 @@ def main() -> None:
     ap.add_argument("--payments", type=int, default=2); ap.add_argument("--amount", default=None)
     ap.add_argument("--vendors", default=None, help="comma-separated candidate vendors (roles or addresses), tried in order")
     ap.add_argument("--prove-lock", action="store_true"); ap.add_argument("--hijack", action="store_true")
+    ap.add_argument("--buy", action="append", default=[], help="x402 resource URL to buy (repeatable); replaces --payments")
     a = ap.parse_args()
     s = Subagent(a.deployment_id)
     rec = s.record()
@@ -111,7 +180,15 @@ def main() -> None:
                    "budget": rec["budget"], "task": a.task, "vendors": vendors, "mode": "llm" if llm.available() else "plan"})
     if a.prove_lock:
         emit("prove_lock", s.prove_lock())
-    if llm.available():
+    if a.buy and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data
+        for url in a.buy:
+            r = s.buy(url, max_rlusd=s.budget_left()["remaining_rlusd"])
+            emit("refused" if r.get("refused") else "buy", {"resource": url, **{k: v for k, v in r.items() if k != "data"},
+                                                            "data_keys": sorted((r.get("data") or {}).keys())
+                                                            if isinstance(r.get("data"), dict) else None})
+        got = sum(1 for e in s.record()["payments"] if e.get("rail") == "x402")
+        s.done(f"{a.task}: bought {got} of {len(a.buy)} x402 resources")
+    elif llm.available():
         system = (f"You are a cereal subagent. Task: {a.task}. You have a subwallet with {rec['budget']} RLUSD. "
                   f"Candidate vendors, in order of preference: {vendors}. Each purchase costs {amount} RLUSD. Make "
                   f"{a.payments} purchases with pay(). If cereal refuses a vendor, do not retry it; use the next one. "
@@ -121,8 +198,12 @@ def main() -> None:
             "pay": ({"type": "object", "properties": {"payee": {"type": "string"}, "amount": {"type": "string"},
                                                        "invoice_id": {"type": "string"}},
                      "required": ["payee", "amount"]}, s.pay),
+            "buy": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
+                     "required": ["url"]}, s.buy),
             "done": ({"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}, s.done),
         }
+        if a.buy:
+            system += f" Resources to buy over x402 with buy(): {a.buy}. Pay only if the price fits budget_left()."
         llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)
     else:
         blocked: set[str] = set()

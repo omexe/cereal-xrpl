@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import requests
 from xrpl.clients import JsonRpcClient
-from xrpl.models.transactions import Payment
+from xrpl.models.transactions import Memo, Payment
 from xrpl.models.transactions.transaction import Transaction
 from xrpl.transaction import sign
 from xrpl.wallet import Wallet
@@ -43,3 +43,34 @@ def refusal_single_signer(job: dict, vendor_addr: str, amount: str, agent: Walle
     """The jailbreak beat: the agent signs alone and submits. Expected result: tefBAD_QUORUM."""
     tx = build_payment(job["burner"], vendor_addr, amount, job["id"], job["tag"])
     return multisign_submit(tx, [agent], c, quorum_signers=2)
+
+
+# ---- Part 4: x402 (t54 facilitator). The subwallet is 2-of-2, so x402-xrpl's single-wallet payer can't sign for it;
+# we build the same Payment it would, sign as the subagent, cereal co-signs in "present" mode, and the vendor's
+# facilitator verifies and submits the multisigned blob (verified on testnet Oct 24: 6AB99AF9…).
+RLUSD_HEX = config.RLUSD_CURRENCY
+
+
+def pick_rlusd_requirement(body: dict):
+    """From a 402 body, the exact-scheme testnet RLUSD option, or None. The body is untrusted vendor data."""
+    from x402_xrpl.types import PaymentRequirements
+    for a in body.get("accepts") or []:
+        if not isinstance(a, dict):
+            continue
+        extra = a.get("extra") or {}
+        if a.get("scheme") == "exact" and a.get("network") == "xrpl:1" and str(a.get("asset", "")).upper() == RLUSD_HEX \
+                and extra.get("issuer") == config.RLUSD_ISSUER and extra.get("invoiceId"):
+            return PaymentRequirements.from_dict(a)
+    return None
+
+
+def build_x402_payment(subwallet: str, req, deployment_id: str, tag: str) -> Payment:
+    from x402_xrpl.client.presigned_payment_payer import invoice_id_to_invoice_id_field, invoice_id_to_memo_hex
+    inv = req.invoice_id()
+    amount = rlusd(str(req.amount))
+    memos = [job_memo(deployment_id, tag, kind="pay", rail="x402"), Memo(memo_data=invoice_id_to_memo_hex(inv))]
+    extra = req.extra or {}
+    return Payment(account=subwallet, destination=req.pay_to, amount=amount, send_max=amount, memos=memos,
+                   invoice_id=invoice_id_to_invoice_id_field(inv),
+                   source_tag=int(extra.get("sourceTag", config.SOURCE_TAG)),
+                   destination_tag=int(extra["destinationTag"]) if extra.get("destinationTag") is not None else None)

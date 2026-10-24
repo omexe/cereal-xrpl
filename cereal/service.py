@@ -14,13 +14,14 @@ from decimal import Decimal
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from xrpl.models.amounts import IssuedCurrencyAmount
+from xrpl.models.requests import Tx
 from xrpl.models.transactions.transaction import Transaction
 from xrpl.wallet import Wallet
 
 from . import config, deployments, device, keystore, subwallets, vendors
 from .burn import reclaim as ledger_reclaim, retire as ledger_retire
 from .fund import fund_burner, funding_payment
-from .ledger import account_info, client, cosign_and_submit, decode_memos, prepare, rlusd_balance
+from .ledger import account_info, client, cosign_and_submit, cosign_combine, decode_memos, prepare, rlusd_balance
 
 app = FastAPI(title="cereal service")
 _main_wallet = threading.Lock()  # one main-wallet transaction sequence at a time
@@ -52,6 +53,9 @@ class CosignRequest(BaseModel):
     deployment_id: str | None = None
     job_id: str | None = None  # legacy single-job path (cereal/demo.py)
     tx: dict
+    # Part 4 (x402): co-sign but do NOT submit; return the signed blob for the vendor's facilitator to submit.
+    present: bool = False
+    resource: str | None = None  # the URL being bought, for the record
 
 
 class DoneRequest(BaseModel):
@@ -160,7 +164,7 @@ def get_subagent(dep_id: str) -> dict:
     rec = deployments.get(dep_id)
     if not rec:
         raise HTTPException(404, "unknown deployment")
-    return _with_balance(rec)
+    return _with_balance(_resolve_presented(rec))
 
 
 @app.post("/subagents/{dep_id}/done")
@@ -202,7 +206,41 @@ def retire(dep_id: str) -> dict:
     return r
 
 
-def _cosign_deployment(rec: dict | None, tx_json: dict) -> dict:
+TF_PARTIAL_PAYMENT = 0x00020000
+
+
+def _payment_shape_refusal(tx_json: dict, amt) -> dict | None:
+    """Only plain, exact RLUSD payments: no partial payments, no paths, SendMax (x402 sets it) at most the Amount."""
+    if int(tx_json.get("Flags", 0) or 0) & TF_PARTIAL_PAYMENT:
+        return _refuse("partial_payment_not_allowed")
+    if tx_json.get("Paths") or tx_json.get("DeliverMin"):
+        return _refuse("paths_not_allowed")
+    sm = tx_json.get("SendMax")
+    if sm is not None:
+        if not isinstance(sm, dict) or sm.get("currency") != amt.currency or sm.get("issuer") != amt.issuer \
+                or Decimal(str(sm.get("value"))) > Decimal(amt.value):
+            return _refuse("send_max_not_allowed", send_max=sm, amount=amt.value)
+    return None
+
+
+def _resolve_presented(rec: dict) -> dict:
+    """x402 payments are submitted by the vendor's facilitator; read their outcome from the ledger, not from anyone's word."""
+    pending = [p for p in rec.get("payments", []) if p.get("result") == "presented" and p.get("hash")]
+    if not pending:
+        return rec
+    c = client()
+    for p in pending:
+        try:
+            r = c.request(Tx(transaction=p["hash"])).result
+        except Exception:
+            continue
+        if r.get("validated"):
+            res = r.get("meta", {}).get("TransactionResult")
+            deployments.update_payment(rec["id"], p["hash"], result=res, ok=res == "tesSUCCESS", validated=True)
+    return deployments.get(rec["id"])
+
+
+def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, resource: str | None = None) -> dict:
     if not rec or rec["status"] != "active":
         return _refuse("unknown_or_inactive_deployment")
     tx = Transaction.from_xrpl(tx_json)
@@ -218,6 +256,9 @@ def _cosign_deployment(rec: dict | None, tx_json: dict) -> dict:
     amt = tx.amount
     if not isinstance(amt, IssuedCurrencyAmount) or amt.currency != config.RLUSD_CURRENCY:
         return _refuse("not_rlusd", amount=str(amt))
+    shape = _payment_shape_refusal(tx_json, amt)
+    if shape:
+        return shape
     remaining = rlusd_balance(c, rec["subwallet"])
     if Decimal(amt.value) > remaining:
         return _refuse("over_budget", requested=amt.value, remaining=str(remaining))
@@ -226,8 +267,16 @@ def _cosign_deployment(rec: dict | None, tx_json: dict) -> dict:
     memos = decode_memos(tx_json)
     if not memos or memos[0].get("job") != rec["id"] or memos[0].get("tag") != rec["tag"]:
         return _refuse("memo_mismatch")
+    if present:  # x402: hand the co-signed blob back; the vendor's facilitator verifies and submits it
+        combined = cosign_combine(tx, config.wallet("CEREAL_COSIGN"))
+        result = {"ok": True, "presented": True, "hash": combined.get_hash(), "blob": combined.blob()}
+        deployments.record_payment(rec["id"], {"to": tx.destination, "amount": amt.value, "rail": "x402",
+                                               "resource": resource, "ok": None, "result": "presented",
+                                               "hash": result["hash"], "explorer": f"{config.EXPLORER}/transactions/{result['hash']}",
+                                               "at": datetime.now(timezone.utc).isoformat()})
+        return result
     result = cosign_and_submit(tx, config.wallet("CEREAL_COSIGN"), c)
-    deployments.record_payment(rec["id"], {"to": tx.destination, "amount": amt.value, **result,
+    deployments.record_payment(rec["id"], {"to": tx.destination, "amount": amt.value, "rail": "direct", **result,
                                            "at": datetime.now(timezone.utc).isoformat()})
     return result
 
@@ -235,7 +284,7 @@ def _cosign_deployment(rec: dict | None, tx_json: dict) -> dict:
 @app.post("/cosign")
 def cosign(req: CosignRequest) -> dict:
     if req.deployment_id:
-        result = _cosign_deployment(deployments.get(req.deployment_id), req.tx)
+        result = _cosign_deployment(deployments.get(req.deployment_id), req.tx, req.present, req.resource)
         if result.get("refused"):
             amt = req.tx.get("Amount")
             deployments.record_refusal(req.deployment_id, {
