@@ -21,6 +21,8 @@ const MODEL = process.env.SPECULOS_MODEL ?? "nanosp";
 const PATH = process.env.LEDGER_PATH ?? "44'/144'/0'/0/0";
 const WS = process.env.QUICKNODE_XRPL_WS || process.env.XRPL_TESTNET_WS_URL || "wss://s.altnet.rippletest.net:51233";
 const SOURCE_TAG = Number(process.env.CEREAL_SOURCE_TAG ?? "20260601");
+const RLUSD_CURRENCY = "524C555344000000000000000000000000000000";
+const RLUSD_ISSUER = process.env.RLUSD_TESTNET_ISSUER ?? "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 async function button(b: "left" | "right" | "both") {
@@ -100,8 +102,27 @@ async function main() {
       const r: any = res.result;
       console.log(`result ${r.meta?.TransactionResult}  hash ${r.hash}\nexplorer https://testnet.xrpl.org/transactions/${r.hash}`);
       void entry;
+    } else if (cmd === "fund") {
+      // fund <burner> <amount> <jobId> <tag>: the treasury's RLUSD budget payment, signed on the device
+      // (the device is a signer on TREASURY; quorum 1). Memo identical to cereal/ledger.py job_memo(kind="fund").
+      const [burner, amount, jobId, tag] = [a, b, c, process.argv[6]];
+      const treasury = process.env.TREASURY_ADDRESS!;
+      const hex = (s: string) => Buffer.from(s, "utf8").toString("hex").toUpperCase();
+      const memo = { Memo: { MemoData: hex(JSON.stringify({ tag, job: jobId, kind: "fund" })),
+                             MemoType: hex("cereal/job"), MemoFormat: hex("application/json") } };
+      const tx = await client.autofill({
+        TransactionType: "Payment", Account: treasury, Destination: burner, SourceTag: SOURCE_TAG,
+        Amount: { currency: RLUSD_CURRENCY, issuer: RLUSD_ISSUER, value: amount }, Memos: [memo],
+      } as Payment, 1);
+      const li = (await client.request({ command: "ledger", ledger_index: "validated" })).result.ledger_index;
+      (tx as any).LastLedgerSequence = li + 75;
+      const { signedBlob, address } = await deviceSigner(tx);
+      const res = await client.submitAndWait(multisign([signedBlob]));
+      const r: any = res.result;
+      console.log(JSON.stringify({ ok: r.meta?.TransactionResult === "tesSUCCESS", result: r.meta?.TransactionResult,
+        hash: r.hash, explorer: `https://testnet.xrpl.org/transactions/${r.hash}`, signer: address, validated: true }));
     } else {
-      console.log("usage: multisign.ts address | sign <tx.json> | sweep <burner> <dest> <xrp>");
+      console.log("usage: multisign.ts address | sign <tx.json> | sweep <burner> <dest> <xrp> | fund <burner> <amount> <job> <tag>");
     }
   } catch (e: any) {
     console.log(`refused/failed: ${e?.data?.engine_result ?? e?.message ?? e}`);

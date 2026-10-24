@@ -9,7 +9,8 @@
     "typecheck": "tsc -p tsconfig.json",
     "address": "tsx multisign.ts address",
     "sweep": "tsx multisign.ts sweep",
-    "sign": "tsx multisign.ts sign"
+    "sign": "tsx multisign.ts sign",
+    "fund": "tsx multisign.ts fund"
   },
   "dependencies": {
     "@ledgerhq/device-management-kit": "^1.11.0",

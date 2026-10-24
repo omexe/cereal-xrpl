@@ -13,10 +13,10 @@ import json
 from . import config, jobs, vendors
 from .burn import burn
 from .compiler import compile_sentence
-from .fund import fund_burner
-from .ledger import client, rlusd_balance
+from .fund import fund_burner, fund_burner_on_device
+from .ledger import client, multisign_submit, rlusd_balance
 from .lock import is_locked, lock_burner
-from .pay import pay, refusal_single_signer
+from .pay import build_payment, pay, refusal_single_signer
 
 
 def say(step: str, payload) -> None:
@@ -33,6 +33,7 @@ def main() -> None:
     ap.add_argument("--amount", default="0.5")
     ap.add_argument("--burn", action="store_true")
     ap.add_argument("--batch-lock", action="store_true", help="try the Batch form first (falls back to sequential)")
+    ap.add_argument("--fund", choices=["device", "software"], default="device" if config.LEDGER_ADDRESS else "software")
     args = ap.parse_args()
     c = client()
     agent = config.wallet("AGENT")
@@ -51,8 +52,13 @@ def main() -> None:
             lock_burner(burner, agent.classic_address, config.address("CEREAL_COSIGN"), job["budget"], c,
                         job_id=job["id"], tag=job["tag"], sequential=not args.batch_lock))
         say("lock state", is_locked(c, burner.classic_address))
-        say("fund (software path; the device path is ledger/)",
-            fund_burner(config.wallet("TREASURY"), burner.classic_address, job["budget"], job["id"], job["tag"], c))
+        funded = None
+        if args.fund == "device":
+            funded = fund_burner_on_device(burner.classic_address, job["budget"], job["id"], job["tag"])
+            say("fund (treasury budget payment signed on the Ledger)", funded)
+        if not funded or not funded.get("ok"):
+            funded = fund_burner(config.wallet("TREASURY"), burner.classic_address, job["budget"], job["id"], job["tag"], c)
+            say("fund (software fallback)", funded)
         jobs.update(job["id"], status="funded")
     say("balance", {"burner": job["burner"], "rlusd": str(rlusd_balance(c, job["burner"]))})
 
@@ -62,13 +68,18 @@ def main() -> None:
     say("pay vendor B (expected: refused by cereal)", pay(job, vendor_b, args.amount, agent, c))
     say("jailbreak: agent signs alone (expected: tefBAD_QUORUM)", refusal_single_signer(job, vendor_a, args.amount, agent, c))
     over = str(rlusd_balance(c, job["burner"]) + 1)
-    say(f"over budget {over} (expected: refused over_budget by cereal; on-ledger it would be tecPATH_PARTIAL)",
-        pay(job, vendor_a, over, agent, c))
+    say(f"over budget {over} (expected: refused over_budget by cereal)", pay(job, vendor_a, over, agent, c))
+    say("compromised co-signer: agent + cereal keys sign the over-budget payment anyway (expected on-ledger: tecPATH_PARTIAL)",
+        multisign_submit(build_payment(job["burner"], vendor_a, over, job["id"], job["tag"]),
+                         [agent, config.wallet("CEREAL_COSIGN")], c))
 
     if args.burn:
         say("burn (sweep → trustset 0 → AccountDelete)",
             burn(job["burner"], config.address("TREASURY"), agent, config.wallet("CEREAL_COSIGN"), c, job["id"], job["tag"]))
         jobs.update(job["id"], status="burned")
+    from .export import export_csv
+    path = export_csv(config.ROOT / "exports" / f"cereal-{job['id']}.csv", c, [job["burner"]])
+    say("export", {"csv": str(path), "rows": sum(1 for _ in open(path)) - 1})
 
 
 if __name__ == "__main__":
