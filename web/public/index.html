@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>cereal — Scoped Burner Wallets on XRPL &amp; Mastercard AP4M</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <!-- 1. HEADER: Main Wallet, Balances, Caps & Policy Badges -->
+    <header class="top-header" id="main-header">
+      <div class="header-top-row">
+        <div class="brand-block">
+          <div class="brand-title-row">
+            <span class="brand-logo">cereal</span>
+            <span class="brand-subtitle">Scoped Burner Subwallets on XRPL + Mastercard AP4M</span>
+            <span class="readonly-pill" title="GET-only proxy to localhost:8001">READ-ONLY LIVE VIEW</span>
+          </div>
+          <div class="main-wallet-line" id="main-wallet-address-line">
+            <span class="field-label">Main Wallet (Treasury):</span>
+            <span class="mono-val" id="main-address">Connecting to cereal service (:8001)…</span>
+          </div>
+        </div>
+
+        <div class="poll-status-box">
+          <span class="live-dot" id="live-dot"></span>
+          <span id="poll-status-text">Polling every 2s…</span>
+        </div>
+      </div>
+
+      <!-- Balances & Caps Strip -->
+      <div class="metrics-strip">
+        <div class="metric-card primary-metric">
+          <div class="metric-label">Main Wallet RLUSD</div>
+          <div class="metric-value-row">
+            <span class="metric-value" id="main-rlusd">—</span>
+            <span class="metric-unit">RLUSD</span>
+            <span class="metric-delta hidden" id="main-rlusd-delta"></span>
+          </div>
+          <div class="metric-sub" id="main-rlusd-initial">Session start: —</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">Main Wallet XRP</div>
+          <div class="metric-value-row">
+            <span class="metric-value" id="main-xrp">—</span>
+            <span class="metric-unit">XRP</span>
+            <span class="metric-delta hidden" id="main-xrp-delta"></span>
+          </div>
+          <div class="metric-sub" id="main-xrp-initial">Reserve &amp; gas</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">Outstanding Budget</div>
+          <div class="metric-value-row">
+            <span class="metric-value" id="main-outstanding">—</span>
+            <span class="metric-unit">RLUSD</span>
+          </div>
+          <div class="metric-sub" id="cap-outstanding">Cap: — RLUSD max</div>
+        </div>
+
+        <div class="metric-card">
+          <div class="metric-label">Active Subagents</div>
+          <div class="metric-value-row">
+            <span class="metric-value" id="main-active-count">—</span>
+            <span class="metric-unit" id="cap-active">/ — max</span>
+          </div>
+          <div class="metric-sub" id="cap-per-subagent">Per-subagent cap: — RLUSD</div>
+        </div>
+      </div>
+
+      <!-- Policy Badges Bar -->
+      <div class="policy-bar" id="policy-bar">
+        <span class="policy-section-label">Enforced Policy:</span>
+        <span class="policy-badge" id="badge-vendor-cred">Vendor Credentials: —</span>
+        <span class="policy-badge" id="badge-device-funding">Owner Approval on Ledger: —</span>
+        <span class="policy-badge" id="badge-ledger-recovery">Ledger Recovery Signer: —</span>
+        <span class="policy-badge" id="badge-ap4m">AP4M Rail Ready: —</span>
+        <span class="policy-issuer" id="policy-issuer-link"></span>
+      </div>
+    </header>
+
+    <!-- 2. TOP PANELS: Owner's Ledger Panel + On-Ledger Vendor Registry -->
+    <section class="top-panels-grid">
+      <!-- Owner's Ledger Panel -->
+      <div class="panel ledger-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">Owner’s Ledger Hardware Signer</h2>
+            <p class="panel-tagline">
+              Signer on the main wallet, weight 2 on every subwallet (alone it meets the quorum).
+            </p>
+          </div>
+          <div class="device-address-box" id="ledger-device-address">
+            <span class="field-label">Device:</span>
+            <span class="mono-val">—</span>
+          </div>
+        </div>
+        <div class="device-approvals-strip" id="ledger-approvals-list">
+          <div class="empty-note">Waiting for deployment approval records…</div>
+        </div>
+      </div>
+
+      <!-- Vendor Credential Registry Panel -->
+      <div class="panel vendor-panel">
+        <div class="panel-header">
+          <div>
+            <h2 class="panel-title">On-Ledger Vendor Registry (XLS-70d Credentials)</h2>
+            <p class="panel-tagline" id="vendor-issuer-subtitle">
+              Co-signer verifies live XRPL Credential objects before signing any payment.
+            </p>
+          </div>
+        </div>
+        <div class="vendor-list" id="vendor-registry-list">
+          <div class="empty-note">Loading vendor credentials from XRPL Testnet…</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3. SUBAGENT DEPLOYMENT CARDS (Newest First) -->
+    <section class="deployments-section">
+      <div class="section-bar">
+        <div class="section-title-group">
+          <h2 class="section-title">Subagent Deployments <span class="count-pill" id="deployments-count">0</span></h2>
+          <span class="section-subtitle">Newest first · One shared budget across XRPL (x402 / direct) and Mastercard AP4M (XRPL EVM)</span>
+        </div>
+        <div class="filter-controls">
+          <button type="button" class="filter-btn active" data-filter="all">All Deployments</button>
+          <button type="button" class="filter-btn" data-filter="latest">Latest Demo Run</button>
+          <button type="button" class="filter-btn" data-filter="rejected">Rejected Only</button>
+        </div>
+      </div>
+
+      <div class="deployments-list" id="deployments-container">
+        <div class="empty-state">Waiting for subagent deployments from <code>GET /subagents</code>…</div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
