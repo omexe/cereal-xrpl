@@ -12,7 +12,7 @@ Ledger scores "DX feedback as much as the code"; Ripple runs the DevEx hook and 
 1. **Signer reference out of date:** `signTransaction` is documented as returning `{ r, s, v }`; `@ledgerhq/device-signer-kit-xrp` 0.3.0 returns a DER `Uint8Array` and accepts a `curve` option. The derivation-path examples mix `44'/144'/0'/0/0` and `m/44'/0'/0'/0/0`.
 2. **Nothing on the portal says the device adds the signing prefix itself, or how to multi-sign.** Both are only in the app-xrp README (empty top-level `SigningPubKey` → multisign prefix + the device's own AccountID appended; parallel multisign only). We needed the device-app source to confirm it. A `multisign` helper (or a documented recipe) in the signer kit would have saved hours.
 3. **Blind-signing requirements are undocumented on the portal:** Credentials (XLS-70), Batch, DelegateSet, PermissionedDomains and MPT are not in the device app's supported list and fail with "This transaction cannot be clear-signed" unless blind signing is enabled.
-4. Speculos: the workshop's button automation works for Nano S Plus/X only; the approval screen text for a multisig transaction differs from a single-signed one (we scroll until "Sign transaction").
+4. Speculos: the workshop's button automation works for Nano S Plus/X only. Multisign through the signer kit worked first time once we knew the empty-`SigningPubKey` convention: device-only sweep from a 2-of-2 burner validated (`9A10502B…`). The only way to learn the convention was the app-xrp C source.
 
 ## t54 / x402
 - (fill in after step 6) whether the facilitator accepts a multi-signed Payment blob from a SignerList account on `xrpl:1`.

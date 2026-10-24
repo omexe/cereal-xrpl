@@ -40,11 +40,13 @@ Verified Oct 24 on BURNER_1: `03616E0A99…`, `A512CC1D7B…`, `B22CE98F11…` �
 
 Acceptance: `python -m cereal.preflight` shows `locked=True` for the burner.
 
-## 2b. The recovery key (h1–h2) — the Ledger alone sweeps and burns
+## 2b. The recovery key (h1–h2) — the Ledger alone sweeps and burns  ✅ verified on testnet
 
 `ledger/multisign.ts`: the device signs a transaction as ONE multisig signer (empty `SigningPubKey`, no `Signers`; the XRP app applies the multisign prefix and appends its own AccountID). `npm run address` prints the device account (put it in `.env` as `LEDGER_ADDRESS` before locking burners); `npm run sweep -- <burner> <treasury> <xrp>` has the device alone move funds out of a locked burner (weight 2 meets the quorum). Clear-signed: Payment, TrustSet, AccountDelete. This is the "if cereal disappears, your Ledger takes your money back" beat and Ledger's "multisig treasuries" gap.
 
-Acceptance: a device-only sweep from a locked burner lands `tesSUCCESS`; the agent alone on the same burner gets `tefBAD_QUORUM`.
+Verified Oct 24 on the locked BURNER_1: device-only sweep `9A10502B1D…` (`tesSUCCESS`, Speculos), agent alone → `tefBAD_QUORUM` (instant with `submit_capture`), agent + cereal → `7B2FC2867E…` (`tesSUCCESS`).
+
+Acceptance: the same three results on a fresh burner for the job.
 
 ## 2. The funding, on the device (h1–h2) — hash #2
 
