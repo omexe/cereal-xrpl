@@ -26,9 +26,10 @@ def activation_xrp(c: JsonRpcClient) -> Decimal:
 
 
 def create(deployment_id: str, tag: str, budget: str, subagent_addr: str, c: JsonRpcClient,
-           main: Wallet | None = None) -> dict:
+           main: Wallet | None = None, sub: Wallet | None = None) -> dict:
+    """`sub`: a keypair generated before the owner's approval (Part 3), so the device showed this exact address."""
     main = main or config.wallet("TREASURY")
-    sub = Wallet.create()
+    sub = sub or Wallet.create()
     addr = sub.classic_address
     amount = activation_xrp(c)
     act = sign_submit(stamp(Payment(account=main.classic_address, destination=addr, amount=xrp_to_drops(amount)),

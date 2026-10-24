@@ -1,7 +1,8 @@
 // Device multisign: the Ledger (or Speculos) signs a transaction as ONE signer of a multisig account.
 // Usage:
 //   npx tsx multisign.ts address                       → prints the device address + pubkey (put LEDGER_ADDRESS in .env)
-//   npx tsx multisign.ts sign  <unsigned-tx.json>      → prints a Signer entry JSON (and the signed blob with only this signer)
+//   npx tsx multisign.ts sign  <unsigned-tx.json>      → one JSON line: Signer entry, blob with only this signer, device screens
+//   DEVICE_DECISION=approve|reject|manual (Speculos): who presses the buttons; manual = a human in the Speculos UI or a real device
 //   npx tsx multisign.ts sweep <burner> <dest> <xrp>   → device-alone recovery: Payment from the burner, signed on device, submitted
 // How it works (verified in LedgerHQ/app-xrp source): the signer kit is a byte signer; pass encode(tx) with an EMPTY
 // top-level SigningPubKey and NO Signers. The device app then uses the multisign prefix and appends its own AccountID,
@@ -33,10 +34,17 @@ async function screen(): Promise<string> {
   const j = await r.json() as { events: { text: string }[] };
   return j.events.map(e => e.text).join(" | ");
 }
-async function autoApprove(stop: { done: boolean }) { // Speculos only; a real device needs a human press
-  for (let i = 0; i < 80 && !stop.done; i++) {
-    const s = await screen();
-    if (/sign transaction|accept|approve/i.test(s) && !/reject/i.test(s)) { await button("both"); await sleep(400); continue; }
+type Decision = "approve" | "reject" | "manual";
+const DECISION = (process.env.DEVICE_DECISION ?? "approve") as Decision;
+// Speculos only: press the buttons for the owner and record every screen the device showed (clear-signing evidence).
+// "manual" presses nothing: a human approves in the Speculos UI (http://127.0.0.1:5000) or on a real device.
+async function drive(stop: { done: boolean }, screens: string[]) {
+  for (let i = 0; i < 120 && !stop.done; i++) {
+    const s = await screen().catch(() => "");
+    if (s && screens[screens.length - 1] !== s) screens.push(s);
+    if (DECISION === "manual") { await sleep(500); continue; }
+    const target = DECISION === "reject" ? /reject/i : /sign transaction|accept|approve/i;
+    if (target.test(s) && (DECISION === "reject" || !/reject/i.test(s))) { await button("both"); await sleep(400); continue; }
     await button("right"); await sleep(250);
   }
 }
@@ -70,15 +78,20 @@ export async function deviceSigner(tx: Transaction) {
   delete unsigned.Signers; delete unsigned.TxnSignature;
   const blob = encode(unsigned);
   const stop = { done: false };
-  const approve = autoApprove(stop);
+  const screens: string[] = [];
+  const driver = drive(stop, screens);
   let sig: any;
   try { sig = await completed<any>(signer.signTransaction(PATH, hexaStringToBuffer(blob)!).observable); }
-  finally { stop.done = true; await approve; }
+  catch (e: any) {
+    const msg = String(e?.message ?? e);
+    const rejected = DECISION === "reject" || /6985|refus|reject|denied|deny/i.test(msg);
+    throw Object.assign(new Error(rejected ? "owner_rejected" : msg), { screens, rejected });
+  }
+  finally { stop.done = true; await driver; await dmk.close?.(); }
   const sigHex = (sig instanceof Uint8Array ? bufferToHexaString(sig) : (sig.r ? sig.r + sig.s : String(sig))).replace(/^0x/, "").toUpperCase();
   const entry = { Signer: { Account: me.address, SigningPubKey: pub, TxnSignature: sigHex } };
   const signedBlob = encode({ ...unsigned, Signers: [entry] });
-  await dmk.close?.();
-  return { entry, signedBlob, address: me.address };
+  return { entry, signedBlob, address: me.address, screens };
 }
 
 async function main() {
@@ -87,9 +100,14 @@ async function main() {
   const client = new Client(WS); await client.connect();
   try {
     if (cmd === "sign") {
+      // sign <unsigned-tx.json>: one JSON line {ok, entry, signedBlob, address, screens} (or ok:false, result owner_rejected)
       const tx = JSON.parse(readFileSync(a, "utf8")) as Transaction;
-      const out = await deviceSigner(tx);
-      console.log(JSON.stringify(out, null, 2));
+      try { console.log(JSON.stringify({ ok: true, ...(await deviceSigner(tx)) })); }
+      catch (e: any) {
+        console.log(JSON.stringify({ ok: false, result: e?.rejected ? "owner_rejected" : "device_error",
+                                     error: String(e?.message ?? e), screens: e?.screens ?? [] }));
+        process.exitCode = 1;
+      }
     } else if (cmd === "sweep") {
       const [burner, dest, xrp] = [a, b, c];
       const tx = await client.autofill({ TransactionType: "Payment", Account: burner, Destination: dest, Amount: xrpToDrops(xrp), SourceTag: SOURCE_TAG } as Payment, 1);

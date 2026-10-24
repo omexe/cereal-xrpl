@@ -8,9 +8,6 @@ from xrpl.clients import JsonRpcClient
 from xrpl.models.transactions import Payment
 from xrpl.wallet import Wallet
 
-import json
-import subprocess
-
 from . import config
 from .ledger import job_memo, rlusd, sign_submit, stamp
 
@@ -24,16 +21,12 @@ def fund_burner(treasury: Wallet, burner_addr: str, budget: str, job_id: str, ta
     return sign_submit(funding_payment(treasury.classic_address, burner_addr, budget, job_id, tag), treasury, c)
 
 
-def fund_burner_on_device(burner_addr: str, budget: str, job_id: str, tag: str, timeout: int = 240) -> dict:
-    """Demo path: the treasury's budget payment signed on the owner's Ledger (Speculos), clear-signed.
-
-    Runs `npm --prefix ledger run fund`; the device is a signer on TREASURY (scripts/setup_demo_state.py step 4).
-    Returns the same result shape as the software path, or {'ok': False, 'result': 'device_error', ...}.
-    """
-    cmd = ["npm", "--prefix", str(config.ROOT / "ledger"), "run", "--silent", "fund", "--",
-           burner_addr, str(budget), job_id, tag]
-    p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    for line in reversed(p.stdout.strip().splitlines()):
-        if line.startswith("{"):
-            out = json.loads(line); out["signed_on"] = "ledger"; return out
-    return {"ok": False, "result": "device_error", "error": (p.stdout + p.stderr)[-400:]}
+def fund_burner_on_device(burner_addr: str, budget: str, job_id: str, tag: str, c: JsonRpcClient | None = None,
+                          decision: str | None = None) -> dict:
+    """The main wallet's budget payment signed on the owner's Ledger (clear-signed); the device is the main wallet's
+    signer (quorum 1). The service uses device.sign + device.submit_signed directly so it can ask before activation."""
+    from . import device
+    from .ledger import client
+    c = c or client()
+    return device.sign_submit(funding_payment(config.address("TREASURY"), burner_addr, budget, job_id, tag), c,
+                              decision=decision)

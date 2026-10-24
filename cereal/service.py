@@ -15,11 +15,12 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from xrpl.models.amounts import IssuedCurrencyAmount
 from xrpl.models.transactions.transaction import Transaction
+from xrpl.wallet import Wallet
 
-from . import config, deployments, keystore, subwallets, vendors
+from . import config, deployments, device, keystore, subwallets, vendors
 from .burn import reclaim as ledger_reclaim, retire as ledger_retire
-from .fund import fund_burner, fund_burner_on_device
-from .ledger import account_info, client, cosign_and_submit, decode_memos, rlusd_balance
+from .fund import fund_burner, funding_payment
+from .ledger import account_info, client, cosign_and_submit, decode_memos, prepare, rlusd_balance
 
 app = FastAPI(title="cereal service")
 _main_wallet = threading.Lock()  # one main-wallet transaction sequence at a time
@@ -31,6 +32,9 @@ class DeployRequest(BaseModel):
     allowed_payees: list[str] = []  # optional narrower filter; empty = any vendor credentialed for vendor_class
     expires_in_hours: float = 24
     vendor_class: str = "data"
+    # Speculos demos only: which button the emulated owner presses (approve | reject). Ignored when a human is
+    # driving the device (CEREAL_DEVICE_DECISION=manual); a real device always waits for its owner.
+    speculos_decision: str | None = None
 
 
 class VendorIssueRequest(BaseModel):
@@ -81,7 +85,9 @@ def main_wallet() -> dict:
     return {"address": addr, "xrp": str(int(account_info(c, addr)["Balance"]) / 1_000_000),
             "rlusd": str(rlusd_balance(c, addr)), "outstanding_budget": str(deployments.outstanding_budget()),
             "active_subagents": len(deployments.active()),
-            "policy": {"vendor_credentials": config.REQUIRE_VENDOR_CREDENTIAL, "issuer": config.address("CREDENTIAL_ISSUER")},
+            "policy": {"vendor_credentials": config.REQUIRE_VENDOR_CREDENTIAL, "issuer": config.address("CREDENTIAL_ISSUER"),
+                       "device_funding": config.DEVICE_FUNDING, "ledger_recovery": config.LEDGER_RECOVERY,
+                       "device": config.LEDGER_ADDRESS},
             "caps": {"MAX_SUBAGENT_BUDGET": config.MAX_SUBAGENT_BUDGET,
                      "MAX_OUTSTANDING_BUDGET": config.MAX_OUTSTANDING_BUDGET,
                      "MAX_ACTIVE_SUBAGENTS": config.MAX_ACTIVE_SUBAGENTS}}
@@ -101,17 +107,39 @@ def deploy(req: DeployRequest) -> dict:
             return _refuse("insufficient_main_balance", rlusd=str(rlusd_balance(c, main_addr)), requested=req.budget)
         if Decimal(int(account_info(c, main_addr)["Balance"])) / 1_000_000 < subwallets.activation_xrp(c) + 1:
             return _refuse("insufficient_main_xrp")
+        if config.DEVICE_FUNDING and not device.available():
+            return _refuse("device_unavailable", speculos=config.SPECULOS_URL,
+                           hint="start the device (docker start speculos-xrp) or set CEREAL_DEVICE_FUNDING=0")
         rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours, req.vendor_class)
         sub_key = keystore.new_subagent_key(rec["id"])
         deployments.update(rec["id"], subagent=sub_key)
-        made = subwallets.create(rec["id"], rec["tag"], req.budget, sub_key, c)
+        sub = Wallet.create()  # the subwallet's address exists before anything is on-ledger, so the owner sees it
+        approval = None
+        if config.DEVICE_FUNDING:
+            # Part 3: the owner approves the budget on the device FIRST. The funding Payment takes the main wallet's
+            # next-but-one Sequence (activation takes the next), is signed now and submitted after the lock.
+            seq = int(account_info(c, main_addr)["Sequence"])
+            pay = funding_payment(main_addr, sub.classic_address, req.budget, rec["id"], rec["tag"])
+            pay = Transaction.from_dict({**pay.to_dict(), "sequence": seq + 1})
+            decision = None if config.DEVICE_DECISION == "manual" else req.speculos_decision
+            approval = device.sign(prepare(pay, c, signers_count=1, window=config.DEVICE_WINDOW_LEDGERS), decision)
+            deployments.update(rec["id"], approval={
+                "by": approval.get("address") or config.LEDGER_ADDRESS,
+                "result": "approved" if approval.get("ok") else approval.get("result"),
+                "screens": approval.get("screens", [])})
+            if not approval.get("ok"):
+                deployments.update(rec["id"], status="rejected" if approval.get("result") == "owner_rejected" else "failed")
+                return _refuse(approval.get("result") or "device_error", deployment=rec["id"],
+                               screens=approval.get("screens", []), sent_transactions=0)
+        made = subwallets.create(rec["id"], rec["tag"], req.budget, sub_key, c, sub=sub)
+        del sub
         deployments.update(rec["id"], subwallet=made["address"])
         deployments.merge_hashes(rec["id"], activate=made["hashes"]["activate"], lock=made["hashes"]["lock"])
         if not made["ok"]:
             deployments.update(rec["id"], status="failed")
             return _refuse("subwallet_failed", deployment=rec["id"], error=made.get("error"))
-        if config.LEDGER_ADDRESS and __import__("os").getenv("CEREAL_DEVICE_FUNDING") == "1":  # Part 3
-            funded = fund_burner_on_device(made["address"], req.budget, rec["id"], rec["tag"])
+        if approval:
+            funded = device.submit_signed(approval, c)
         else:
             funded = fund_burner(config.wallet("TREASURY"), made["address"], req.budget, rec["id"], rec["tag"], c)
         deployments.merge_hashes(rec["id"], fund=funded.get("hash"))
@@ -164,7 +192,7 @@ def reclaim(dep_id: str) -> dict:
 @app.post("/subagents/{dep_id}/retire")
 def retire(dep_id: str) -> dict:
     rec = deployments.get(dep_id)
-    if not rec or rec["status"] != "reclaimed":
+    if not rec or rec["status"] not in ("reclaimed", "recovered"):
         return _refuse("not_reclaimed", status=rec and rec["status"])
     r = ledger_retire(rec["subwallet"], config.address("TREASURY"), keystore.load(dep_id),
                       config.wallet("CEREAL_COSIGN"), client(), rec["id"], rec["tag"])

@@ -28,7 +28,13 @@ SERVICE_URL = os.getenv("CEREAL_SERVICE_URL", "http://localhost:8001")
 MAX_SUBAGENT_BUDGET = float(os.getenv("MAX_SUBAGENT_BUDGET", "5"))
 MAX_OUTSTANDING_BUDGET = float(os.getenv("MAX_OUTSTANDING_BUDGET", "10"))
 MAX_ACTIVE_SUBAGENTS = int(os.getenv("MAX_ACTIVE_SUBAGENTS", "5"))
-LEDGER_RECOVERY = os.getenv("CEREAL_LEDGER_RECOVERY", "0") == "1"  # Part 3: add the owner's Ledger (weight 2) to subwallets
+# Part 3 (on by default when a device is configured): the owner's Ledger is a weight-2 recovery signer on every
+# subwallet, and approves every subagent's budget on the device before anything touches the ledger.
+LEDGER_RECOVERY = os.getenv("CEREAL_LEDGER_RECOVERY", "1" if LEDGER_ADDRESS else "0") == "1"
+DEVICE_FUNDING = os.getenv("CEREAL_DEVICE_FUNDING", "1" if LEDGER_ADDRESS else "0") == "1"
+DEVICE_DECISION = os.getenv("CEREAL_DEVICE_DECISION", "approve")  # Speculos driver: approve | reject | manual
+SPECULOS_URL = os.getenv("SPECULOS_URL", "http://127.0.0.1:5000")
+DEVICE_WINDOW_LEDGERS = int(os.getenv("CEREAL_DEVICE_WINDOW_LEDGERS", "150"))  # time for a human to press approve
 REQUIRE_VENDOR_CREDENTIAL = os.getenv("CEREAL_REQUIRE_VENDOR_CREDENTIAL", "1") == "1"  # Part 2 (on by default)
 
 ROLES = ["TREASURY", "AGENT", "CEREAL_COSIGN", "BURNER_1", "BURNER_2", "BURNER_3",
