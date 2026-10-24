@@ -210,13 +210,21 @@ function renderDeviceScreenHtml(approval, depId, task, extraFooter = '') {
 
 function renderLedgerPanel(subagents) {
   const container = document.getElementById('ledger-approvals-list');
-  const withApprovals = [...subagents]
+  const reversed = [...subagents]
     .reverse()
     .filter((d) => d && d.approval && (d.approval.result || (d.approval.screens && d.approval.screens.length)));
 
-  if (!withApprovals.length) {
+  if (!reversed.length) {
     container.innerHTML = `<div class="empty-note">No Ledger device approvals recorded yet.</div>`;
     return;
+  }
+
+  // Ensure the most recent rejected approval is visible alongside the latest approvals
+  const latestRejected = reversed.find((d) => d.status === 'rejected' || d.approval?.result === 'owner_rejected');
+  const withApprovals = [...reversed];
+  if (latestRejected && withApprovals.indexOf(latestRejected) > 1) {
+    withApprovals.splice(withApprovals.indexOf(latestRejected), 1);
+    withApprovals.splice(1, 0, latestRejected);
   }
 
   container.innerHTML = withApprovals
@@ -549,7 +557,7 @@ function renderTimeline(dep) {
   return `<div class="timeline-list">${rows.join('')}</div>`;
 }
 
-function renderDeploymentCard(dep) {
+function renderDeploymentCard(dep, index = 0) {
   const status = String(dep.status || 'unknown').toLowerCase();
   const isRejected = status === 'rejected' || dep.approval?.result === 'owner_rejected';
   const b = computeBudgetBreakdown(dep);
@@ -747,5 +755,9 @@ function setupFilters() {
 }
 
 setupFilters();
-pollOnce();
-setInterval(pollOnce, 2000);
+
+async function pollLoop() {
+  await pollOnce();
+  setTimeout(pollLoop, 2000);
+}
+pollLoop();
