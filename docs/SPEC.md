@@ -114,10 +114,16 @@ Caps (env, enforced only in the service): `MAX_SUBAGENT_BUDGET` (default 5), `MA
 
 **Run.** `make beats` (main agent, 2 subagents, `--beats`); `python -m cereal.beats stolen-keys <deployment_id>`; `python -m cereal.vendors check|issue|accept|revoke VENDOR_B`. Hashes are in `docs/BUILD-ORDER.md` Part 2.
 
-## Part 3 — Ledger device (after Part 2; built on Speculos)
-- **Owner approves funding:** the device (`rn1FZHRNBPX8g2Y5Xzhx1LonhmSheFYMAq`) is a signer on the main wallet (`C195250E…`); `POST /subagents` funds through `fund.fund_burner_on_device` → `ledger/multisign.ts fund` (clear-signed RLUSD Payment). Verified `9357D8D5…`.
-- **Recovery signer:** subwallet signer list becomes {subagent 1, cereal 1, Ledger 2}, quorum 2; the device alone can sweep (`ledger/multisign.ts sweep`, verified `9A10502B…`) and retire.
-- Device facts: pass `encode(tx)` with empty `SigningPubKey` and no `Signers`; the XRP app adds the multisign prefix and its AccountID; parallel only; clear-signs Payment/TrustSet/SignerListSet/AccountSet/AccountDelete; Credentials/Batch need blind signing.
+## Part 3 — Ledger device (done)
+**Signers.** Main wallet: signer list {Ledger 1}, quorum 1 (software key still enabled on testnet; see the boundary note in BUILD-ORDER). Subwallet: {subagent 1, cereal 1, Ledger 2}, quorum 2, master disabled.
+
+**Deploy with a device** (`CEREAL_DEVICE_FUNDING`, default on when `LEDGER_ADDRESS` is set): the subwallet keypair is generated locally; the funding `Payment` (main wallet → that address, budget RLUSD, `cereal/job` memo `kind: fund`, Sequence = main + 1) is signed on the device first; then activation (Sequence = main + 0), the lock, and the pre-signed funding are submitted. Refusals before any transaction: `device_unavailable`, `owner_rejected` (`sent_transactions: 0`, status `rejected`), `device_error`/`device_timeout`. `POST /subagents` takes an optional `speculos_decision` (approve | reject) for Speculos demos; it is ignored when `CEREAL_DEVICE_DECISION=manual`. The record keeps `approval: {by, result, screens}`. `GET /main` reports `policy.device_funding`, `policy.ledger_recovery`, `policy.device`.
+
+**Recovery** (`cereal/recover.py`, owner-run, no service): Payment of the full RLUSD balance → main wallet, `TrustSet` limit 0 with `tfSetNoRipple`, and `AccountDelete` (fail_hard) once ≥256 ledgers old; each signed by the device alone (weight 2 = quorum). Memo `cereal/job` `kind: recover` when the deployment is known. Status `recovered`.
+
+**Device facts.** Pass `encode(tx)` with an empty `SigningPubKey` and no `Signers`; the XRP app adds the multisign prefix and appends its AccountID. Parallel multisign only. Clear-signs Payment/TrustSet/SignerListSet/AccountSet/AccountDelete; Credentials and Batch need blind signing, so they stay software-signed. One device session at a time: don't run two device flows at once against one Speculos.
+
+**Run.** `make device` (main agent demo); `python -m cereal.recover <deployment> [--retire]`; `npm --prefix ledger run address`. Speculos: `docker start speculos-xrp` (UI at http://127.0.0.1:5000).
 
 ## Part 4 — payment rails (after Part 3; not built)
 - **x402 (t54):** a subagent's `pay` becomes `buy(resource_url)`: GET → 402 → build Payment from the challenge → co-sign → present. `x402-xrpl`'s client signs with one wallet, so test whether the facilitator (`https://xrpl-facilitator-testnet.t54.ai`) accepts a multisigned blob; else submit directly and send the hash. Verifiable Intent chain via t54 (`docs/INTEGRATIONS.md` §2).

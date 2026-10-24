@@ -21,7 +21,7 @@ disposable, budget-exact wallets for AI agents, written in one plain-English sen
 - **vendor trust is a ledger credential.** the co-signer checks `ledger_entry` for a `cereal:vendor:*` credential issued by `CREDENTIAL_ISSUER` to the destination before signing; revocation is `CredentialDelete` with a reason memo. nothing off-chain can grant trust: a deployment's optional allowlist only narrows the credentialed set.
 - **every transaction carries the tag.** `SourceTag` = cereal's tag; `Memos` = hex JSON `{"tag":"<hmac(team,project,task)>","job":"<id>"}`; `InvoiceID` when the vendor supplies one. plain-text team/project/task never go on-chain; cereal keeps the mapping for the export.
 - **set `fee` and `last_ledger_sequence` explicitly** (≈ current ledger + 75). submit `AccountDelete` with `fail_hard=True`.
-- **device rule.** only clear-signable types go through Ledger/Speculos: the treasury's funding `Payment`. Batch, Credentials and AccountDelete are software-signed.
+- **device rule.** only clear-signable types go through Ledger/Speculos: the main wallet's funding `Payment` (approved before anything touches the ledger) and the owner's recovery (`Payment`, `TrustSet`, `AccountDelete` on a subwallet, device alone). Batch and Credentials are blind-sign only on the device, so they stay software-signed.
 - **refusals are results, not exceptions.** catch `XRPLReliableSubmissionException` / tef results and keep the raw `engine_result` (`tefBAD_QUORUM`, `tecPATH_PARTIAL`, `tefMASTER_DISABLED`) for the trace; never retry a `tec*`/`tef*` silently; never claim a payment settled without a validated hash.
 - **burn order.** `Payment` remaining RLUSD → TREASURY, `TrustSet` limit 0, then `AccountDelete(destination=TREASURY)`. burners must be ≥256 ledgers old; the pool is created at step 0.
 
@@ -31,7 +31,7 @@ disposable, budget-exact wallets for AI agents, written in one plain-English sen
 ## layout
 - `cereal/` python package: `ledger.py` (client, fee/LLS, memos, submit), `lock.py`, `fund.py`, `pay.py`, `vendors.py`, `cosign.py` (FastAPI), `burn.py`, `export.py`, `compiler.py` (sentence → card; the agent never calls it), `agent.py` (tools `check_vendor`, `pay_vendor`, `budget_left`).
 - `x402/server.py` VENDOR_A's paid endpoint (planted instruction in its response), `x402/client.py` reference payer.
-- `ledger/` node: DMK + Speculos signing of the treasury Payment.
+- `ledger/` node: DMK + Speculos multisign signer (`multisign.ts sign` → one JSON line with the Signer entry and what the device screen showed); `cereal/device.py` drives it, `cereal/recover.py` is the owner's device-only recovery.
 - `scripts/` `new_wallet.py`, `send_payment.py`, `setup_pool.py`.
 - `web/` job card, payment feed, decline card, burn, export; webhook endpoint for QuickNode.
 - `docs/` `DEMO-SCRIPT.md`, `BUILD-ORDER.md`. `HACKATHON.md` at code lock.

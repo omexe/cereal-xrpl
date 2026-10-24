@@ -6,7 +6,7 @@ Build one part at a time. A part is done when its acceptance checks pass on test
 |---|---|---|
 | **1** | **Main agent on the main wallet deploys subagents into subwallets** | **done**: verified on testnet Oct 24 (hashes below), including retire |
 | **2** | **Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats** | **done**: wired into the co-sign policy and the main agent flow; beats verified on testnet Oct 24 (hashes below) |
-| 3 | Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet | built and verified on Speculos — wire in after Part 2 |
+| **3** | **Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet** | **done**: wired into deploy, the main agent and recovery; acceptance passed on testnet with Speculos Oct 24 (hashes below) |
 | 4 | Payment rails: x402 via t54 (+ Verifiable Intent) and Mastercard AP4M on XRPL EVM | not built |
 | 5 | Accounting and visibility: tags, export, QuickNode webhook feed, dashboard | export built; webhook and dashboard not built |
 | 6 | Submission: demo script, README, HACKATHON.md, video, answers | not built |
@@ -98,8 +98,38 @@ With the subagent key and the co-signer key together: an over-balance drain is `
 | `make beats` (goal → 2 subagents, credentials on, no allowlist) | d_61e7f7: activate `A47F4B16…`, fund `98A734FF…`; refused vendor B with evidence `C0237EDD…`; paid vendor A `17DAFA31…` `8A4CF016…`; reclaim `0F9324E8…` `25F94D52…`. d_6efe83: activate `016F290B…`, fund `1322AC9B…`; hijack layer 1 `vendor_not_credentialed`, layer 2 `tefBAD_QUORUM`; stolen keys `tecPATH_PARTIAL` `27054551…` and `tefBAD_SIGNATURE` on the main wallet; paid vendor A `B677EFDD…` `739C29CB…`; reclaim `A5B46469…` `0CD7289A…`. Main wallet 18.7477 → 17.7477 RLUSD = the four 0.25 payments, reconciled |
 | `make acceptance` Part 2 (opt-in pytest, own service on :8012, credentials on, no allowlist) | passed Oct 24 in 2 min 14 s: paid credentialed vendor A `884E421F…`; vendor B issued `B30752D2…` → refused while `pending` → accepted `7C18D746…` → paid `7DA79839…` → revoked `A1C5C110…` → refused with exactly that hash as evidence and the subwallet's Sequence unchanged; hijack layer 1 `vendor_not_credentialed`, layer 2 `tefBAD_QUORUM`; stolen keys `tecPATH_PARTIAL` `79C42C10…` with the balance unchanged and `tefBAD_SIGNATURE` on the main wallet; reclaim; main wallet −0.50 RLUSD = the two payments. Evidence JSON in `exports/` |
 
-## Part 3 — Ledger device (after Part 2)
-The main wallet's subwallet funding is signed on the owner's Ledger (the device is a signer on the main wallet: `C195250E…`; `cereal/fund.py fund_burner_on_device`, `ledger/multisign.ts fund`). Every subwallet's signer list adds the owner's Ledger at weight 2 so the device alone can recover funds (`LEDGER_ADDRESS`). Verified already: device-signed funding `9357D8D5…`, device-only sweep `9A10502B…`. DX feedback for Ledger in `docs/DX-FEEDBACK.md`.
+## Part 3 — Ledger device: the owner approves budgets and can take the money back alone
+**What it proves.** The main agent can ask for money, but only the owner's Ledger can give it: each subagent's budget payment is shown on the device and signed there before anything touches the ledger, and a rejection sends nothing. Every subwallet carries the owner's device at weight 2, so if cereal disappears the owner sweeps the money home with the device alone. Normal payments still need subagent + cereal; neither alone can spend.
+
+### p3.1 Device signer — `cereal/device.py`, `ledger/multisign.ts sign`  ✅
+Python prepares the transaction (fee for one multisig signer, ~150-ledger window for a human to press), the device signs it as a multisig signer (empty `SigningPubKey`, no `Signers`; the XRP app adds the prefix and its AccountID), Python submits. Output is one JSON line with the `Signer` entry and every screen the device showed. Speculos button driver: `CEREAL_DEVICE_DECISION=approve|reject|manual` (manual = a human in the Speculos UI at http://127.0.0.1:5000 or a real device).
+
+### p3.2 Approval before anything touches the ledger — `POST /subagents`  ✅
+On by default when `LEDGER_ADDRESS` is set (`CEREAL_DEVICE_FUNDING=0` turns it off). Order: caps → balances → device reachable (else `device_unavailable`) → record + subagent key → subwallet keypair generated locally → the funding `Payment` to that address (main wallet Sequence + 1) is shown and signed on the device → rejected: `owner_rejected`, `sent_transactions: 0`, status `rejected` → approved: activate (Sequence + 0), lock, submit the pre-signed funding. The record keeps `approval {by, result, screens}`.
+
+### p3.3 Recovery signer and owner recovery — `cereal/lock.py`, `cereal/recover.py`  ✅
+Signer list {subagent 1, cereal 1, Ledger 2}, quorum 2 (on by default with a device; `CEREAL_LEDGER_RECOVERY=0` turns it off). `python -m cereal.recover <deployment|subwallet> [--retire]`: sweep RLUSD home and close the trust line (and `AccountDelete` once old enough), each signed by the device alone; no cereal key and no service. Status `recovered`; `make retire` also retires recovered subwallets.
+
+### p3.4 Device beats through the main agent — `make device`  ✅
+The main agent asks for an extra subagent and the owner rejects it on the device (nothing sent); two subagents are approved, funded and pay; the owner recovers the second with the device alone ("cereal went dark"); the first is reclaimed normally; the main wallet reconciles. The tree prints what the device displayed for every approval.
+
+### p3.5 Part 3 tests and record
+`tests/test_part3.py` (offline, 9): device unavailable or rejected = nothing on-ledger; approval precedes activation and the device saw exactly the subwallet that was created; manual mode ignores API button choices; software funding when device funding is off; recovery weight meets quorum alone; recovery sweeps then closes the line, stops if the sweep fails. `tests/test_part3_testnet.py` (live, opt-in, skips without Speculos).
+
+**Part 3, verified on testnet Sat Oct 24 (Speculos nanosp, device `rn1FZHRNBPX8g2Y5Xzhx1LonhmSheFYMAq`):**
+| Check | Evidence |
+|---|---|
+| Device clear-signs the budget payment | screens: Transaction Type Payment · Account (main wallet) · Source Tag 20260601 · Amount 1 · Currency RLUSD · Issuer · Fee · Destination (the new subwallet) · Memo `cereal/job` `{tag, job, kind: fund}` · Sign transaction? |
+| Owner rejects (d_43321e) | `owner_rejected`, `sent_transactions: 0`, main wallet Sequence unchanged |
+| Owner approves (d_a72682) | funding `3E17BA6B…` with `SigningPubKey ""` and `Signers` = [device] only; activate `2FEB7291…` |
+| Signer list | {subagent 1, cereal 1, Ledger 2}, quorum 2, master disabled |
+| Normal path | subagent + cereal paid vendor A `F786BA41…` |
+| Neither alone | cereal alone `tefBAD_QUORUM`; subagent alone `tefBAD_QUORUM` |
+| Owner recovery, device alone | sweep 0.75 RLUSD `3A6F33B5…`, close line `41021605…` (both `Signers` = [device] only); also d_e541a3: sweep `22C962D4…`, close line `266D96A1…` |
+| `make acceptance` Part 3 | passed Oct 24 in 2 min 1 s; main wallet down exactly the one 0.25 payment. Evidence JSON in `exports/` |
+| `make device` (main agent, 2 subagents, Speculos auto-pressing) | owner rejected an extra 1 RLUSD subagent on the device: 0 transactions. d_0bc9fc: approved on device, activate `FBF725DB…`, device-only funding `30C934C3…`, paid `2C624CD6…` `0445FF5D…`, reclaim `02E6F926…` `B62BD2AD…`. d_0c2dc8: approved, activate `699E5770…`, device-only funding `BEB0DE2C…`, paid `539CC844…` `043F2FFC…`, recovered by the device alone `87070A55…` (sweep) `6BEDF93D…` (close line). Main wallet 16.9977 → 15.9977 RLUSD = the four 0.25 payments, reconciled |
+
+**Boundary, said plainly.** On testnet the main wallet keeps its software key so teammates without the device can run the service; the device is a signer on it (quorum 1). In production the main wallet's master key is disabled and its signer list is {Ledger}, so no budget moves without the device. The activation XRP (refundable reserve, ~1.9 XRP) is software-signed; the device approves the RLUSD budget.
 
 ## Part 4 — payment rails (after Part 3)
 - **x402 via t54:** subagents buy from vendor A's paid endpoint (`x402/server.py`); test whether the facilitator accepts the subwallet's multisigned payment, else submit directly and send the hash; attach a Verifiable Intent chain (`docs/INTEGRATIONS.md` §2).
