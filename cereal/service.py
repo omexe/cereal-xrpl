@@ -195,7 +195,25 @@ def reclaim(dep_id: str) -> dict:
     if ok:
         deployments.update(dep_id, status="reclaimed", returned=str(before),
                            reclaimed_at=datetime.now(timezone.utc).isoformat())
-    return {"ok": ok, "returned": str(before), "steps": [{"step": n, **r} for n, r in steps]}
+    out = {"ok": ok, "returned": str(before), "steps": [{"step": n, **r} for n, r in steps]}
+    closed = close_ap4m_channel(dep_id)
+    if closed:
+        out["ap4m"] = closed
+    return out
+
+
+def close_ap4m_channel(dep_id: str) -> dict | None:
+    """Part 4b: a finished subagent's AP4M Channel is closed with the rest of it. Record every redemption from the chain
+    first, then close, so the unused cap returns to the team's AP4M budget. Returns None if it never used AP4M."""
+    channel = ap4m.channel_for_job(dep_id)
+    if not channel:
+        return None
+    added = reconcile_ap4m(dep_id)
+    res = ap4m.close(channel)
+    if res.get("ok"):
+        deployments.merge_hashes(dep_id, ap4m_close=res.get("tx_hash"))
+        ap4m.forget_job(dep_id)
+    return {"channel_id": channel, "recorded": len(added), **{k: res.get(k) for k in ("ok", "tx_hash", "error")}}
 
 
 @app.post("/subagents/{dep_id}/retire")

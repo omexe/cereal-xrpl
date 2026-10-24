@@ -97,3 +97,21 @@ def test_reconcile_is_idempotent(svc):
     assert len(service.ap4m_reconcile(rec["id"])["added"]) == 1
     assert service.ap4m_reconcile(rec["id"])["added"] == []
     assert service.ap4m_spent(deployments.get(rec["id"])) == Decimal("0.25")
+
+
+def test_reclaim_records_then_closes_the_ap4m_channel(svc):
+    service, rec, calls, mp = svc
+    order = []
+    mp.setattr(service, "reconcile_ap4m", lambda dep_id, *a, **k: order.append("reconcile") or [])
+    mp.setattr(ap4m, "close", lambda ch, **k: order.append(("close", ch)) or {"ok": True, "tx_hash": "0xclose"})
+    mp.setattr(ap4m, "forget_job", lambda job: order.append(("forget", job)))
+    out = service.close_ap4m_channel(rec["id"])
+    assert order == ["reconcile", ("close", "0xch"), ("forget", rec["id"])], "record from the chain before closing"
+    assert out["ok"] and deployments.get(rec["id"])["hashes"]["ap4m_close"] == "0xclose"
+
+
+def test_reclaim_without_ap4m_closes_nothing(svc):
+    service, rec, calls, mp = svc
+    mp.setattr(ap4m, "channel_for_job", lambda job: None)
+    mp.setattr(ap4m, "close", lambda ch, **k: pytest.fail("no Channel to close"))
+    assert service.close_ap4m_channel(rec["id"]) is None

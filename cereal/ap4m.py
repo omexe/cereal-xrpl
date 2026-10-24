@@ -56,3 +56,26 @@ def channel_state(channel_id: str, timeout: int = 120) -> dict:
         return json.loads(p.stdout.strip().splitlines()[-1])
     except (subprocess.TimeoutExpired, ValueError, IndexError) as e:
         return {"ok": False, "error": str(e)}
+
+
+def close(channel_id: str, timeout: int = 600) -> dict:
+    """Close a Channel (ap4m/close.mjs): the agent signs the final checkpoint, the service submits closeChannel and the
+    unused cap returns to the team budget. The AP4M service limits how many Channels a team can hold open at once."""
+    with _one_at_a_time:
+        try:
+            p = subprocess.run(["node", str(AP4M_DIR / "close.mjs"), channel_id], capture_output=True, text=True,
+                               timeout=timeout, cwd=str(AP4M_DIR))
+            return json.loads(p.stdout.strip().splitlines()[-1])
+        except (subprocess.TimeoutExpired, ValueError, IndexError) as e:
+            return {"ok": False, "channel_id": channel_id, "error": str(e)}
+
+
+def forget_job(job: str) -> None:
+    """Drop a closed Channel from pay.mjs's job index so a later payment for this job never reuses it."""
+    f = AP4M_DIR / "agent-state" / "cereal-channels.json"
+    try:
+        d = json.loads(f.read_text())
+        if d.get("channelsByJob", {}).pop(job, None):
+            f.write_text(json.dumps(d, indent=2) + "\n")
+    except (OSError, ValueError):
+        pass
