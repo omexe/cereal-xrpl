@@ -100,7 +100,9 @@ def submit_capture(signed: Transaction, c: JsonRpcClient, *, fail_hard: bool = F
     prelim = submit(signed, c, fail_hard=fail_hard).result
     code = prelim.get("engine_result", "?")
     tx_hash = (prelim.get("tx_json") or {}).get("hash")
-    if code[:3] in ("tef", "tem", "tel") or (code.startswith("ter") and code != "terQUEUED"):
+    # fail_hard: a tec preliminary result is not relayed, so it will never validate; return it now.
+    if code[:3] in ("tef", "tem", "tel") or (code.startswith("ter") and code != "terQUEUED") \
+            or (fail_hard and code.startswith("tec")):
         return {"ok": False, "result": code, "hash": None, "explorer": None, "validated": False,
                 "message": prelim.get("engine_result_message")}
     deadline = int(signed.to_dict().get("last_ledger_sequence") or 0)

@@ -48,25 +48,25 @@ Verified Oct 24 on the locked BURNER_1: device-only sweep `9A10502B1D…` (`tesS
 
 Acceptance: the same three results on a fresh burner for the job.
 
-## 2. The funding, on the device (h1–h2) — hash #2
+## 2. The funding, on the device (h1–h2) — hash #2  ✅ verified on testnet
 
 `ledger/fund.ts`: treasury `Payment` of exactly the budget in RLUSD to the burner, `Memos` = hex JSON `{"tag":"<hmac(team,project,task)>","job":"<id>"}`, `SourceTag` = cereal's tag, `DestinationTag` if the issuer needs it, signed through DMK `device-signer-kit-xrp` on Speculos (the XRP app clear-signs IOU Payments). `cereal/fund.py` is the software fallback with the same fields. Set `fee` and `last_ledger_sequence` explicitly.
 
 Acceptance: burner RLUSD balance == budget; explorer shows the memo. Keep the Speculos screenshot.
 
-## 3. The payment and the two refusals (h2–h4) — hash #3 plus two captured results
+## 3. The payment and the two refusals (h2–h4) — hash #3 plus two captured results  ✅ verified on testnet
 
 `cereal/pay.py`: agent builds a `Payment` (RLUSD, `memos` tag, `invoice_id`) from the burner, `autofill`, `sign(tx, AGENT, multisign=True)`, POST the signed blob to `/cosign`; the service rebuilds the tx, signs with CEREAL_COSIGN (`multisign=True`), combines with `xrpl.transaction.multisign`, submits with `submit_and_wait`.
 
 Acceptance (all three in the trace): (a) VENDOR_A payment `tesSUCCESS` (hash #3); (b) the same payment submitted with the agent's signature only → `tefBAD_QUORUM` (store the raw `engine_result`; `submit_and_wait` raises on tef, so catch and keep the code); (c) a payment above the balance → `tecPATH_PARTIAL` on-ledger (hash).
 
-## 4. Vendor credentials (h4–h5) — hash #4
+## 4. Vendor credentials (h4–h5) — hash #4  ✅ verified on testnet
 
 `cereal/vendors.py`: `CredentialCreate` from CREDENTIAL_ISSUER (`subject`=vendor, `credential_type`=hex of `cereal:vendor:data`), `CredentialAccept` by the vendor, then `CredentialDelete` for VENDOR_B with a memo `{"reason":"overcharge","report":"<hash>"}`. `check_vendor(address)` reads `ledger_entry` (credential: subject, issuer, credential_type) and returns valid / revoked / none.
 
 Acceptance: VENDOR_A co-signed; VENDOR_B declined with the `CredentialDelete` hash as the reason (hash #4).
 
-## 5. The co-sign service (h4–h6)
+## 5. The co-sign service (h4–h6)  ✅ verified on testnet
 
 `cereal/cosign.py` (FastAPI, port 8001): `POST /cosign {job_id, tx_blob}` → decode → checks in order: Account is a burner cereal locked for this job; Destination has a valid credential; amount ≤ remaining budget; now < expiry; memo tag matches the job → co-sign → submit → `{hash}`; refusals return `{refused: reason, evidence: <hash or code>}`. Never holds a budget; signs only `Payment`s from its burners and the burn transactions in step 8.
 
@@ -91,9 +91,9 @@ Acceptance: the 90 seconds runs end to end once, sentence to export, by Sat 22:0
 
 "If we stopped now, is it demoable?" If not, cut in this order: x402 facilitator leg (direct Payment + memo) → QuickNode webhook (poll) → AgentCore deploy (run the loop locally) → Speculos (software treasury key, say so). Never cut: the lock Batch, the two-key payment, `tefBAD_QUORUM`, the credential revoke, the burn, the export.
 
-## 8. The burn and the export (Sun 06:00–09:00) — hashes #5–#7
+## 8. The burn and the export (Sun 06:00–09:00) — hashes #5–#7  ✅ verified on testnet
 
-`cereal/burn.py`, multi-signed by AGENT + CEREAL_COSIGN (or by the owner's Ledger alone, weight 2, for the recovery story): `Payment` remaining RLUSD → TREASURY (hash #5) → `TrustSet` limit 0 (hash #6; the line deletes at zero balance, zero limit, no flags) → `AccountDelete(destination=TREASURY)` with `fail_hard=True` (hash #7; fee = owner reserve increment). Use a burner from step 0 so it is old enough. `cereal/export.py`: `account_tx` for every burner with cereal's SourceTag, decode memo tags via cereal's mapping, write CSV (date, vendor, amount, hash, team, project, task, sentence).
+`cereal/burn.py`, multi-signed by AGENT + CEREAL_COSIGN (or by the owner's Ledger alone, weight 2, for the recovery story). Verified Oct 24 on BURNER_2: sweep `A7CB9A0D…`, TrustSet 0 with tfSetNoRipple `AB21A804…`, AccountDelete `7EEC6B44…`. The steps: `Payment` remaining RLUSD → TREASURY (hash #5) → `TrustSet` limit 0 (hash #6; the line deletes at zero balance, zero limit, no flags) → `AccountDelete(destination=TREASURY)` with `fail_hard=True` (hash #7; fee = owner reserve increment). Use a burner from step 0 so it is old enough. `cereal/export.py`: `account_tx` for every burner with cereal's SourceTag, decode memo tags via cereal's mapping, write CSV (date, vendor, amount, hash, team, project, task, sentence).
 
 Acceptance: the burner no longer resolves on the explorer; TREASURY balance rose; the CSV opens.
 

@@ -11,6 +11,8 @@ from xrpl.wallet import Wallet
 
 from .ledger import account_info, job_memo, ledger_index, multisign_submit, rlusd, rlusd_balance, stamp
 
+TF_SET_NO_RIPPLE = 0x00020000
+
 
 def burnable_in(c: JsonRpcClient, burner_addr: str) -> int:
     """Ledgers until AccountDelete is allowed (<= 0 means now)."""
@@ -23,16 +25,23 @@ def burn(burner_addr: str, treasury_addr: str, agent: Wallet, cosign: Wallet, c:
     memos = [job_memo(job_id, tag, kind="burn")] if job_id else []
     steps: list[tuple[str, dict]] = []
     remaining = rlusd_balance(c, burner_addr)
+    from xrpl.models.requests import AccountLines
+    has_line = bool(c.request(AccountLines(account=burner_addr)).result.get("lines"))
     if remaining > 0:
         tx = stamp(Payment(account=burner_addr, destination=treasury_addr, amount=rlusd(remaining)), memos)
         r = multisign_submit(tx, [agent, cosign], c)
         steps.append(("sweep", r))
         if not r["ok"]:
             return steps
-    r = multisign_submit(stamp(TrustSet(account=burner_addr, limit_amount=rlusd("0")), memos), [agent, cosign], c)
-    steps.append(("trustset_zero", r))
-    if not r["ok"]:
-        return steps
+    # Close the line with NoRipple SET: for an account without DefaultRipple that is the default state, and only a
+    # line in default state (zero balance, zero limits, default flags) is deleted. Without it the line survives with
+    # lsfLowReserve and AccountDelete fails with tecHAS_OBLIGATIONS (seen on testnet Oct 24, burner r4J4evbR…).
+    if has_line:
+        r = multisign_submit(stamp(TrustSet(account=burner_addr, limit_amount=rlusd("0"), flags=TF_SET_NO_RIPPLE), memos),
+                             [agent, cosign], c)
+        steps.append(("trustset_zero", r))
+        if not r["ok"]:
+            return steps
     r = multisign_submit(stamp(AccountDelete(account=burner_addr, destination=treasury_addr), memos),
                          [agent, cosign], c, fail_hard=True)
     steps.append(("account_delete", r))

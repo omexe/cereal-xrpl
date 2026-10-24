@@ -130,7 +130,7 @@ Their judging (integration guide): the agent reads a 402, decides and pays with 
 | Ledger on treasury signer list | `C195250E…` |
 | Treasury RLUSD (testnet AMM) | `4291601F…` → 21.75 RLUSD |
 | x402 via t54 (single-key payer) | `B628848C…` |
-| End-to-end scripted demo on BURNER_2 | running (results added when it completes) |
+| End-to-end scripted demo on BURNER_2 (job `7d0c4ea2`, 5 RLUSD) | lock `13567BA9…`/`56D59A40…`/`123CA438…` · budget signed on the Ledger `9357D8D5…` · pay vendor A `1CE4AB4C…` · vendor B refused (`vendor_not_credentialed`, evidence `C0237EDD…`) · agent alone `tefBAD_QUORUM` · over budget refused by cereal · compromised co-signer capped on-ledger `tecPATH_PARTIAL` `DE340B70…` · sweep `A7CB9A0D…` · trust line closed `AB21A804…` · **AccountDelete `7EEC6B44…`** · export 10 rows |
 
 ## 11. Gotchas
 - `Batch` lock: outer `tesSUCCESS`, inner rolled back, no inner results in metadata → sequential is the default.
@@ -139,7 +139,9 @@ Their judging (integration guide): the agent reads a 402, decides and pays with 
 - `x402-xrpl`'s client signs with one wallet: a 2-of-2 burner cannot use it as is. Test whether the facilitator accepts a multisigned blob; otherwise submit directly and send the hash.
 - RLUSD faucet (`tryrlusd.com/api/mint-xrpl`, 10/claim) needs a GitHub sign-in; testnet AMM self-payment is the fallback.
 - Burner trust-line limit = budget: a top-up beyond it needs a multisigned `TrustSet` first (a feature: the ledger caps receipts too).
-- `account_tx` on a deleted burner may return nothing on public testnet nodes: export before or right after the burn, and keep `jobs.json` payments as the fallback.
+- Close the burner's trust line with `TrustSet` limit 0 **and `tfSetNoRipple`**: for an account without DefaultRipple that is the line's default state; without it the line survives (`lsfLowReserve`) and `AccountDelete` fails with `tecHAS_OBLIGATIONS`.
+- `AccountDelete` is submitted with `fail_hard`; a `tec` preliminary result is then never relayed, so `submit_capture` returns it immediately.
+- `account_tx` still returned a deleted burner's history on the public testnet node (export after the burn worked); keep `jobs.json` payments as the fallback anyway.
 
 ## 12. Open work for the backend (pick by initials in the PR)
 1. Dashboard API (§6) on top of the existing modules; the web UI consumes it.
