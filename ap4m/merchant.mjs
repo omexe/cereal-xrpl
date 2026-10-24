@@ -104,7 +104,8 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// Compare file paths, not URLs: import.meta.url percent-encodes the space in "XRP HACKS", argv[1] does not.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
     console.error(JSON.stringify({ ok: false, error: err?.message ?? String(err) }));
     process.exit(1);
