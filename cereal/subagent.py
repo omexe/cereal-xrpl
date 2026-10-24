@@ -177,6 +177,8 @@ def main() -> None:
     ap.add_argument("--prove-lock", action="store_true"); ap.add_argument("--hijack", action="store_true")
     ap.add_argument("--buy", action="append", default=[], help="x402 resource URL to buy (repeatable); replaces --payments")
     ap.add_argument("--ap4m", action="append", default=[], help="AP4M merchant resource URL to buy (repeatable)")
+    ap.add_argument("--probe-off-plan", default=None,
+                    help="before buying, try a trusted vendor outside my plan; cereal must refuse (payee_not_allowed)")
     a = ap.parse_args()
     s = Subagent(a.deployment_id)
     rec = s.record()
@@ -187,6 +189,8 @@ def main() -> None:
                    "budget": rec["budget"], "task": a.task, "vendors": vendors, "mode": "llm" if llm.available() else "plan"})
     if a.prove_lock:
         emit("prove_lock", s.prove_lock())
+    if a.probe_off_plan:  # the plan lock: a credentialed vendor that is not in this subagent's plan
+        emit("plan_lock", {"payee": a.probe_off_plan, **s.pay(_addr(a.probe_off_plan), "0.01")})
     if (a.buy or a.ap4m) and not llm.available():  # Part 4: each URL answers 402; pay it within budget, keep the data
         for spec in a.buy:  # "url" or "url@max|fallback_url@max": alternatives in the plan's order
             for alt in spec.split("|"):

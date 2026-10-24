@@ -89,3 +89,29 @@ def test_claude_only_picks_items_that_exist(monkeypatch):
     monkeypatch.setattr(llm, "available", lambda: True)
     monkeypatch.setattr(llm, "choose_items", lambda goal, items: ["agenda", "secret-extra"])
     assert pricing.needs_from_goal("whatever", ["agenda", "speakers"]) == ["agenda"]
+
+
+def test_shop_locks_each_subagent_to_its_plan_and_probes_an_off_plan_vendor(market, monkeypatch):
+    from cereal import main_agent
+    p = pricing.plan("Pull the Swell agenda and speaker list", Decimal("2"), list(CAT))
+    deploys, starts = [], []
+    monkeypatch.setattr(pricing, "plan", lambda goal, env: p)
+    monkeypatch.setattr(main_agent, "_get", lambda path: {"rlusd": "10", "caps": {}, "address": "rMAIN"})
+    monkeypatch.setattr(main_agent.MainAgent, "deploy_subagent",
+                        lambda self, task, budget, allowed_payees=None, speculos_decision=None, plan=None:
+                        deploys.append((task, budget, allowed_payees, plan)) or {"ok": True, "id": f"d_{len(deploys)}"})
+    monkeypatch.setattr(main_agent.MainAgent, "start_subagent", lambda self, d, task, payments=2, extra=None:
+                        starts.append((d, extra)) or {"started": d})
+    monkeypatch.setattr(main_agent.MainAgent, "wait_subagent", lambda self, d, timeout_s=0: {"exit": 0})
+    monkeypatch.setattr(main_agent.MainAgent, "reclaim_subagent", lambda self, d: {"ok": True, "returned": "0"})
+    monkeypatch.setattr(main_agent.MainAgent, "main_wallet", lambda self: {"rlusd": "10"})
+    monkeypatch.setattr(main_agent, "print_tree", lambda *a, **k: None)
+    monkeypatch.setattr(main_agent.time, "sleep", lambda s: None)
+    main_agent.shop("Pull the Swell agenda and speaker list", Decimal("2"))
+    agenda, speakers = deploys
+    assert agenda[2] == ["rC"], "agenda: only C (A's 0.25 does not fit the 0.20 budget)"
+    assert speakers[2] == ["rA", "rC"], "speakers: A, then C as its fallback"
+    assert agenda[3]["allowed_payees"] == ["rC"] and "rB" not in speakers[2]
+    agenda_extra = dict(zip(starts[0][1][::2], starts[0][1][1::2]))
+    assert agenda_extra["--probe-off-plan"] == "rA", "A is trusted but outside the agenda plan"
+    assert "--probe-off-plan" not in starts[1][1], "every trusted vendor is already in the speakers plan"

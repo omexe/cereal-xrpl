@@ -163,7 +163,7 @@ Built: merchant (`merchant.mjs`), agent CLI (`pay.mjs --resource --amount --cap 
 Per-item prices (`X402_ITEMS`), one paywall per item, free `GET /catalog`. Demo vendors: A trusted (agenda 0.25, speakers 0.25, `make vendor`), B revoked and cheapest (0.05 each, `make vendor-b`), C trusted (agenda 0.15, speakers 0.30, `make vendor-c`; `r3NdoyQh…`, credential `83C0A7F0…`/`BC78C286…`).
 
 ### p5.2 Pricing engine and the shopping main agent — `cereal/pricing.py`, `make shop`  ✅
-`plan(goal, envelope)`: needs from the goal (Claude picks catalog items, else word matching), offers per need (catalog, 402 quote, on-ledger credential), cheapest trusted wins, fallbacks kept if they fit, skipped vendors recorded with evidence; budget = quote + max(20 %, 0.05) rounded up; refuses `over_envelope` and `no_trusted_vendor`. The main agent deploys one subagent per need with its budget and its plan (`POST /subagents {plan}`); the subagent pays at most the quoted price and falls back in order (`--buy url@max|url@max`). `python -m cereal.pricing "<goal>"` prints a plan without spending.
+`plan(goal, envelope)`: needs from the goal (Claude picks catalog items, else word matching), offers per need (catalog, 402 quote, on-ledger credential), cheapest trusted wins, fallbacks kept if they fit, skipped vendors recorded with evidence; budget = quote + max(20 %, 0.05) rounded up; refuses `over_envelope` and `no_trusted_vendor`. The main agent deploys one subagent per need with its budget and its plan (`POST /subagents {plan}`), locked to the plan's vendors (`allowed_payees` = the pick and its fallbacks, so cereal refuses any other vendor); the subagent pays at most the quoted price and falls back in order (`--buy url@max|url@max`). `python -m cereal.pricing "<goal>"` prints a plan without spending.
 
 **Verified on testnet Sat Oct 24 (`make shop`, goal "Pull the Swell agenda and speaker list", envelope 2):**
 | Check | Evidence |
@@ -172,6 +172,7 @@ Per-item prices (`X402_ITEMS`), one paywall per item, free `GET /catalog`. Demo 
 | d_6cc577 (agenda) | owner approved 0.2 on Ledger, device-only funding `D5F50BCB…`, paid C 0.15 `EDE22D06…`, returned 0.05 |
 | d_684aaf (speakers) | owner approved 0.3, funding `23469484…`, paid A 0.25 `553FAAA6…`, returned 0.05 |
 | Reconcile | main wallet 10.7477 → 10.3477 RLUSD = the two payments |
+| Plan lock (`make shop`, second run) | each subagent may pay only its plan's vendors (`allowed_payees` = pick + fallbacks). d_defbdc (agenda, may pay C only) tried trusted vendor A: `payee_not_allowed`, nothing sent; bought from C `8FBEA0CD…`. d_aadcbc (speakers, may pay A or C) bought from A `83F002A4…`. Main wallet 10.3477 → 9.9477 RLUSD, reconciled |
 
 ### p5.3 Accounting, live feed, dashboard (next)
 Tags (HMAC of team/project/task) are on every memo; `cereal/export.py` CSV exists from the early design and needs an endpoint over all rails. Security events (hijack layer 2, stolen keys) need recording on the deployment. Dashboard: Gemini's prototype in `web/` (read-only, GET-only proxy); the UI team builds from the published dashboard brief.

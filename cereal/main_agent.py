@@ -128,8 +128,10 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
         pl = r.get("plan")
         if pl:
             skipped = "; ".join(f"skipped {x['vendor']} ({x['reason']})" for x in pl.get("rejected", []))
+            allowed = ", ".join([pl["vendor"]] + [f["vendor"] for f in pl.get("fallbacks", [])])
             print(f"│     plan     {pl['item']}: {pl['vendor']} at {pl['price']} RLUSD, budget {pl['budget']}"
                   + (f"; {skipped}" if skipped else ""))
+            print(f"│     may pay  {allowed} only")
         h = r.get("hashes", {})
         print(f"│     activate {EXPLORER}/transactions/{h.get('activate')}")
         print(f"│     lock     " + ", ".join(x[:10] + "…" for x in h.get("lock", []) if x))
@@ -147,6 +149,9 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict, reje
                 print(f"│       layer 1 cereal: {d.get('refused') or d.get('result')} ({(d.get('vendor') or {}).get('status', '')})")
             elif e == "hijack_alone":
                 print(f"│       layer 2 ledger: {d.get('result')} (agent went rogue and signed alone)")
+            elif e == "plan_lock":
+                print(f"│     locked   trusted vendor {str(d.get('payee'))[:10]}… is outside this plan: "
+                      f"{d.get('refused') or d.get('result')} (nothing sent)")
             elif e == "stolen_keys":
                 print(f"│     stolen keys: {d.get('attempt')}: {d.get('result')}"
                       + (f"  {EXPLORER}/transactions/{d['hash']}" if d.get("hash") else ""))
@@ -187,9 +192,11 @@ def _up(url: str) -> bool:
 def _plan_record(line: dict) -> dict:
     """What a deployment keeps about its plan: the choice, the fallbacks and what was skipped, with evidence."""
     pick = line["chosen"]
-    return {"item": line["item"], "vendor": pick["vendor"], "url": pick["url"], "price": line["price"],
-            "budget": line["budget"],
-            "fallbacks": [{"vendor": f["vendor"], "url": f["url"], "price": f["quote"]["price"]} for f in line["fallbacks"]],
+    return {"item": line["item"], "vendor": pick["vendor"], "url": pick["url"], "payee": pick["payee"],
+            "price": line["price"], "budget": line["budget"],
+            "allowed_payees": [pick["payee"]] + [f["payee"] for f in line["fallbacks"]],
+            "fallbacks": [{"vendor": f["vendor"], "url": f["url"], "payee": f["payee"], "price": f["quote"]["price"]}
+                          for f in line["fallbacks"]],
             "rejected": [{"vendor": r["vendor"], "price": r["quote"].get("price") or r.get("catalog_price"),
                           "reason": r["reason"], "evidence": (r.get("evidence") or {}).get("hash")} for r in line["rejected"]]}
 
@@ -205,15 +212,24 @@ def shop(goal: str, envelope: Decimal) -> None:
         sys.exit(f"no subagents deployed: {p['reason']}")
     agent = MainAgent([], prove_lock=False)
     ids = []
+    # every trusted vendor the plan saw, so each subagent can prove it may not pay the ones outside its own plan
+    trusted_seen = {o["payee"]: o["vendor"] for l in p["lines"] if l["chosen"]
+                    for o in [l["chosen"], *l["fallbacks"], *l.get("unaffordable", [])]}
     for line in p["lines"]:
         rec = _plan_record(line)
-        r = agent.deploy_subagent(f"{goal}: {line['item']}", line["budget"], plan=rec)
+        # Locked to its plan: cereal co-signs only for this subagent's pick and its fallbacks.
+        r = agent.deploy_subagent(f"{goal}: {line['item']}", line["budget"], allowed_payees=rec["allowed_payees"],
+                                  plan=rec)
         print(f"deploy {line['budget']} RLUSD for {line['item']} → {r.get('id')} {r.get('subwallet')} "
               f"{'ok' if r.get('ok') else r}")
         if r.get("ok"):
             ids.append(r["id"])
             alts = "|".join([f"{rec['url']}@{rec['price']}"] + [f"{f['url']}@{f['price']}" for f in rec["fallbacks"]])
-            agent.start_subagent(r["id"], f"{goal}: {line['item']}", extra=["--buy", alts])
+            extra = ["--buy", alts]
+            off_plan = [addr for addr in trusted_seen if addr not in rec["allowed_payees"]]
+            if off_plan:  # proof of the lock: a trusted vendor outside this plan is refused before anything is sent
+                extra += ["--probe-off-plan", off_plan[0]]
+            agent.start_subagent(r["id"], f"{goal}: {line['item']}", extra=extra)
     for d in ids:
         w = agent.wait_subagent(d)
         print(f"subagent {d} finished (exit {w['exit']})")
