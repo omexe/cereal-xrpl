@@ -2,7 +2,7 @@
 
 built at the AI & Fintech XRPL Hackathon, New York, Oct 24–25 2026.
 
-> one-line pitch goes here.
+> disposable, budget-exact wallets for AI agents: one plain-English sentence, locked by the ledger (2-of-2, no master key), vendors checked against on-chain credentials, burned at the end into an accounting export. See `docs/PROJECT.md`.
 
 ## quickstart (5 minutes)
 
