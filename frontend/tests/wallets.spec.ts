@@ -157,6 +157,7 @@ test('mock data fills existing and archived wallets once while preserving user e
   });
   await page.reload();
   const snapshot = () => page.evaluate(() => JSON.parse(localStorage.getItem('cereal-demo-v1')!));
+  await expect.poll(async () => (await snapshot()).wallets.every((wallet: { mockDataVersion?: number }) => wallet.mockDataVersion === 1)).toBe(true);
   const populated = await snapshot();
   for (const wallet of populated.wallets) {
     expect(wallet.balance).toBeGreaterThan(0);
