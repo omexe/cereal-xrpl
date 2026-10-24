@@ -48,6 +48,17 @@ async function drive(stop: { done: boolean }, screens: string[]) {
     await button("right"); await sleep(250);
   }
 }
+// Speculos: a dropped connection can leave the XRP app halfway through a review, and every later request then fails
+// with 0x6901 (busy). Before each signature and after any error, reject whatever is on screen until the app is idle.
+async function ensureIdle(): Promise<boolean> {
+  for (let i = 0; i < 40; i++) {
+    const s = await screen().catch(() => "");
+    if (/app is ready/i.test(s)) return true;
+    if (/reject/i.test(s)) { await button("both"); await sleep(500); continue; }
+    await button("right"); await sleep(250);
+  }
+  return /app is ready/i.test(await screen().catch(() => ""));
+}
 async function completed<T>(obs: Observable<any>): Promise<T> {
   const s = await firstValueFrom(obs.pipe(filter((st: any) => [DeviceActionStatus.Completed, DeviceActionStatus.Error, DeviceActionStatus.Stopped].includes(st.status))));
   if (s.status !== DeviceActionStatus.Completed) throw new Error(`device action ${s.status}: ${JSON.stringify(s.error ?? s)}`);
@@ -71,6 +82,7 @@ export async function deviceAddress() {
 
 /** Sign `tx` (unsigned, fully autofilled) on the device as a multisig signer. Returns the Signer entry and a blob carrying only it. */
 export async function deviceSigner(tx: Transaction) {
+  if (DECISION !== "manual") await ensureIdle();
   const { signer, dmk } = await connect();
   const me = await completed<{ address: string; publicKey: string }>(signer.getAddress(PATH, { checkOnDevice: false }).observable);
   const pub = me.publicKey.toUpperCase();
@@ -84,6 +96,8 @@ export async function deviceSigner(tx: Transaction) {
   try { sig = await completed<any>(signer.signTransaction(PATH, hexaStringToBuffer(blob)!).observable); }
   catch (e: any) {
     const msg = String(e?.message ?? e);
+    stop.done = true; await driver;
+    if (DECISION !== "manual") await ensureIdle();  // never leave the app mid-review for the next request
     const rejected = DECISION === "reject" || /6985|refus|reject|denied|deny/i.test(msg);
     throw Object.assign(new Error(rejected ? "owner_rejected" : msg), { screens, rejected });
   }
