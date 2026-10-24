@@ -96,8 +96,23 @@ Caps (env, enforced only in the service): `MAX_SUBAGENT_BUDGET` (default 5), `MA
 
 ---
 
-## Part 2 — vendor trust (after Part 1; built)
-`/cosign` adds the on-ledger check: the payee must hold a `cereal:vendor:data` credential (`CredentialType` hex `63657265616c3a76656e646f723a64617461`) issued by `CREDENTIAL_ISSUER` (`rKsUzgmh1iMvYQMtqDnKaF7VV8xE5GR9yW`) and accepted. Revocation is `CredentialDelete` with memo type `cereal/vendor-revocation` `{reason, report}`; refusals carry it as evidence (`vendors.check` → `{status: valid|pending|revoked|none, revocation?}`). The Part 1 allowlist stays as an optional narrower filter. Verified: A credentialed `4A974099…`/`8C8B0DEC…`; B revoked `C0237EDD…`; refusal with evidence; compromised co-signer capped on-ledger `tecPATH_PARTIAL` `DE340B70…`.
+## Part 2 — vendor trust and refusal beats (done)
+**Credential.** The payee must hold a `cereal:vendor:data` credential (`CredentialType` hex `63657265616c3a76656e646f723a64617461`) issued by `CREDENTIAL_ISSUER` (`rKsUzgmh1iMvYQMtqDnKaF7VV8xE5GR9yW`) and accepted by the vendor (`lsfAccepted`). `vendors.check` reads the ledger, not a database, and returns `{status: valid|pending|expired|revoked|none, revocation?}`.
+
+**Revocation.** `CredentialDelete` by the issuer with memo type `cereal/vendor-revocation` and data `{reason, report}`. It is public, so one transaction blocks the vendor for every cereal customer. The newest `CredentialDelete` for the subject and class is the evidence; a later `CredentialCreate` supersedes it.
+
+**Co-sign policy** (`CEREAL_REQUIRE_VENDOR_CREDENTIAL=1`, the default): deployment active → payment from its subwallet → vendor credential `valid` (else `vendor_not_credentialed` with the `vendor` check, including the revocation hash) → allowlist only if the deployment has one (`payee_not_allowed`) → RLUSD → balance → expiry → memo. Every refusal is recorded on the deployment with its evidence and sends no transaction. With credentials on, `POST /subagents` may omit `allowed_payees`; with them off it refuses `no_payee_policy`.
+
+**Beats.**
+| Beat | Who | Expected |
+|---|---|---|
+| Revoked vendor | subagent → `/cosign` | `vendor_not_credentialed`, evidence = the `CredentialDelete` hash; subagent falls back to a credentialed vendor |
+| Hijacked subagent, layer 1 | subagent → `/cosign` for a random address | `vendor_not_credentialed` (status `none`) |
+| Hijacked subagent, layer 2 | subagent signs alone and submits | `tefBAD_QUORUM` |
+| Stolen keys (subagent + co-signer) | over-balance drain from the subwallet | `tecPATH_PARTIAL` on-ledger, balance unchanged |
+| Stolen keys | spend from the main wallet | `tef*` (`tefBAD_SIGNATURE`) |
+
+**Run.** `make beats` (main agent, 2 subagents, `--beats`); `python -m cereal.beats stolen-keys <deployment_id>`; `python -m cereal.vendors check|issue|accept|revoke VENDOR_B`. Hashes are in `docs/BUILD-ORDER.md` Part 2.
 
 ## Part 3 — Ledger device (after Part 2; built on Speculos)
 - **Owner approves funding:** the device (`rn1FZHRNBPX8g2Y5Xzhx1LonhmSheFYMAq`) is a signer on the main wallet (`C195250E…`); `POST /subagents` funds through `fund.fund_burner_on_device` → `ledger/multisign.ts fund` (clear-signed RLUSD Payment). Verified `9357D8D5…`.

@@ -13,8 +13,8 @@ vendor:       ## vendor A's x402 endpoint on :8000
 	$(PY) x402/server.py
 test:         ## unit tests (no network)
 	.venv/bin/pytest -q
-acceptance:   ## Part 1 acceptance on live testnet (~4 min, spends ~1 RLUSD to vendor A)
-	.venv/bin/pytest -q -s --run-testnet -m testnet tests/test_part1_testnet.py
+acceptance:   ## Parts 1+2 acceptance on live testnet (~6 min, spends ~1.5 RLUSD to our own vendor accounts)
+	.venv/bin/pytest -q -s --run-testnet -m testnet tests/
 demo:         ## scripted 90 seconds; needs cosign running and credentials issued
 	$(PY) -m cereal.demo --sentence "Give the research agent 20 RLUSD for data vendors until tomorrow, project swell-brief, team growth, task news"
 export:       ## accounting CSV

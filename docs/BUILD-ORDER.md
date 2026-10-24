@@ -4,8 +4,8 @@ Build one part at a time. A part is done when its acceptance checks pass on test
 
 | Part | Scope | Status |
 |---|---|---|
-| **1** | **Main agent on the main wallet deploys subagents into subwallets** | **done**: verified on testnet Oct 24 (hashes below); retire pending account age |
-| 2 | Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats | built and verified (vendor check, revocation evidence, refusals) — wire in after Part 1 |
+| **1** | **Main agent on the main wallet deploys subagents into subwallets** | **done**: verified on testnet Oct 24 (hashes below), including retire |
+| **2** | **Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats** | **done**: wired into the co-sign policy and the main agent flow; beats verified on testnet Oct 24 (hashes below) |
 | 3 | Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet | built and verified on Speculos — wire in after Part 2 |
 | 4 | Payment rails: x402 via t54 (+ Verifiable Intent) and Mastercard AP4M on XRPL EVM | not built |
 | 5 | Accounting and visibility: tags, export, QuickNode webhook feed, dashboard | export built; webhook and dashboard not built |
@@ -63,15 +63,40 @@ Acceptance (the Part 1 demo): one goal → two subagents in two subwallets, depl
 | Payee not on the allowlist | refused by `/cosign` (`payee_not_allowed`) |
 | Reclaim | sweep `8A3ABE18…`, trust line closed `591DF5C5…`; retire too early → `too_young` (225 ledgers) |
 | `make main-agent` (goal → 2 subagents) | d_31496c: activate `7D3FC29E…`, fund `AA045F5D…`, pays `7719802A…` `DDAE7F5E…`, reclaim `2B003D75…` `2BE5DC58…`; d_379fdc: activate `7FB20117…`, fund `337F945F…`, pays `2387359B…` `C60F96AF…`, reclaim `44647F80…` `642C46A6…`; both proved `tefBAD_QUORUM` alone; main wallet 20.7477 → 19.7477 RLUSD = the four 0.25 payments, reconciled |
-| Retire | pending: `python -m cereal.main_agent --retire-all` once each subwallet is ≥256 ledgers old |
+| Retire | d_31496c `580BF24E…`, d_379fdc `1B096C08…` (`AccountDelete`, reserve back to the main wallet) |
 | `make acceptance` (opt-in pytest, live testnet, own service on :8011 with outstanding cap 2.5) | passed Oct 24 in 2 min 49 s: per-subagent and outstanding cap refusals with the main wallet's Sequence unchanged; deploys d_6dd34f (activate `16A4B410…`, fund `BF42DFCD…`), d_409220 (activate `D793648A…`, fund `1B3835CF…`); on-ledger: master disabled, quorum 2, signers = {subagent, cereal}, trust-line limit = budget; each subagent alone `tefBAD_QUORUM`; 4 payments verified multi-signed with SourceTag and memo; payee/over-budget refusals with the subwallet's Sequence unchanged; reclaims with trust lines deleted; main −1.0 RLUSD = vendor A +1.0 RLUSD; retire refused too early. Evidence JSON in `exports/` |
 
 
 ---
 
-## Part 2 — vendor trust (after Part 1)
-Replace the allowlist check in `/cosign` with the on-ledger credential check (`cereal/vendors.py`), keeping the allowlist as an optional narrower filter. Demo beats: credentialed vendor paid; revoked vendor refused with the `CredentialDelete` hash; hijacked subagent signing alone (`tefBAD_QUORUM`); compromised co-signer capped by the ledger (`tecPATH_PARTIAL`).
-Verified already: vendor A credential `4A974099…`/`8C8B0DEC…`, vendor B revoked `C0237EDD…`, refusal with evidence, `tecPATH_PARTIAL` `DE340B70…`.
+## Part 2 — vendor trust and refusal beats
+**What it proves.** A subagent may pay any vendor that holds a cereal vendor credential on-ledger, and nobody else. Blocking a vendor is one public `CredentialDelete` that every cereal customer's co-signer reads, and each refusal carries that transaction as evidence. A hijacked subagent is stopped twice (cereal refuses, then the ledger refuses the agent alone), and an attacker holding both keys is capped by the subwallet's balance and cannot touch the main wallet.
+
+### p2.1 Credential check in the co-sign policy — `cereal/service.py`  ✅
+`CEREAL_REQUIRE_VENDOR_CREDENTIAL=1` (default). Policy order: deployment active → payment from its subwallet → vendor credential (`vendor_not_credentialed` with `vendor` evidence) → allowlist only if non-empty (`payee_not_allowed`) → RLUSD → balance → expiry → memo. `POST /subagents` accepts an empty allowlist when credentials are on; `GET /main` reports the policy.
+
+### p2.2 Vendor lifecycle — `cereal/vendors.py`  ✅
+`issue` / `accept` / `revoke` (memo `cereal/vendor-revocation` `{reason, report}`) / `check` → `valid | pending | expired | revoked | none`. A re-issue after a revocation supersedes it. CLI: `python -m cereal.vendors check|issue|accept|revoke VENDOR_B`.
+
+### p2.3 Hijack beat — `cereal/subagent.py --hijack`  ✅
+An injected instruction tells the subagent to move everything to a random address. Layer 1: cereal refuses (`vendor_not_credentialed`, status `none`). Layer 2: the agent signs alone and the ledger refuses (`tefBAD_QUORUM`).
+
+### p2.4 Stolen-keys beat — `cereal/beats.py stolen-keys`  ✅
+With the subagent key and the co-signer key together: an over-balance drain is `tecPATH_PARTIAL` on-ledger (nothing moves) and a spend from the main wallet is `tefBAD_SIGNATURE`.
+
+### p2.5 Beats through the main agent — `make beats`  ✅
+`python -m cereal.main_agent --beats`: subagent 1 tries revoked vendor B first, is refused with the revocation hash, falls back to vendor A; subagent 2 is hijacked; then the stolen-keys beat runs on subagent 2; both are reclaimed and the main wallet reconciles.
+
+### p2.6 Part 2 tests and record
+`tests/test_part2.py` (offline): credential states, revocation evidence before the allowlist, empty allowlist = any credentialed vendor, allowlist narrows, `no_payee_policy` when credentials are off. `tests/test_part2_testnet.py` (live, opt-in, `make acceptance`): vendor B's whole lifecycle on-ledger plus both beats.
+
+**Part 2, verified on testnet Sat Oct 24:**
+| Check | Evidence |
+|---|---|
+| Vendor A credentialed | `4A974099…` / `8C8B0DEC…` |
+| Vendor B revoked (memo `overcharge`) | first `C0237EDD…` (used by `make beats`); current `3FF46EE4…` after the acceptance run. The co-signer always cites the newest `CredentialDelete`. |
+| `make beats` (goal → 2 subagents, credentials on, no allowlist) | d_61e7f7: activate `A47F4B16…`, fund `98A734FF…`; refused vendor B with evidence `C0237EDD…`; paid vendor A `17DAFA31…` `8A4CF016…`; reclaim `0F9324E8…` `25F94D52…`. d_6efe83: activate `016F290B…`, fund `1322AC9B…`; hijack layer 1 `vendor_not_credentialed`, layer 2 `tefBAD_QUORUM`; stolen keys `tecPATH_PARTIAL` `27054551…` and `tefBAD_SIGNATURE` on the main wallet; paid vendor A `B677EFDD…` `739C29CB…`; reclaim `A5B46469…` `0CD7289A…`. Main wallet 18.7477 → 17.7477 RLUSD = the four 0.25 payments, reconciled |
+| `make acceptance` Part 2 (opt-in pytest, own service on :8012, credentials on, no allowlist) | passed Oct 24 in 2 min 14 s: paid credentialed vendor A `884E421F…`; vendor B issued `B30752D2…` → refused while `pending` → accepted `7C18D746…` → paid `7DA79839…` → revoked `A1C5C110…` → refused with exactly that hash as evidence and the subwallet's Sequence unchanged; hijack layer 1 `vendor_not_credentialed`, layer 2 `tefBAD_QUORUM`; stolen keys `tecPATH_PARTIAL` `79C42C10…` with the balance unchanged and `tefBAD_SIGNATURE` on the main wallet; reclaim; main wallet −0.50 RLUSD = the two payments. Evidence JSON in `exports/` |
 
 ## Part 3 — Ledger device (after Part 2)
 The main wallet's subwallet funding is signed on the owner's Ledger (the device is a signer on the main wallet: `C195250E…`; `cereal/fund.py fund_burner_on_device`, `ledger/multisign.ts fund`). Every subwallet's signer list adds the owner's Ledger at weight 2 so the device alone can recover funds (`LEDGER_ADDRESS`). Verified already: device-signed funding `9357D8D5…`, device-only sweep `9A10502B…`. DX feedback for Ledger in `docs/DX-FEEDBACK.md`.
