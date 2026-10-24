@@ -7,8 +7,8 @@ Build one part at a time. A part is done when its acceptance checks pass on test
 | **1** | **Main agent on the main wallet deploys subagents into subwallets** | **done**: verified on testnet Oct 24 (hashes below), including retire |
 | **2** | **Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats** | **done**: wired into the co-sign policy and the main agent flow; beats verified on testnet Oct 24 (hashes below) |
 | **3** | **Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet** | **done**: wired into deploy, the main agent and recovery; acceptance passed on testnet with Speculos Oct 24 (hashes below) |
-| **4** | **Payment rails: x402 via t54 (+ Verifiable Intent) and Mastercard AP4M on XRPL EVM** | **x402 done** (testnet Oct 24, hashes below); AP4M built in `ap4m/`, waiting on the agent key and XRPL EVM gas; Verifiable Intent not started |
-| 5 | Accounting and visibility: tags, export, QuickNode webhook feed, dashboard | export built; webhook and dashboard not built |
+| **4** | **Payment rails: x402 via t54 and Mastercard AP4M on XRPL EVM** | **x402 done** (testnet Oct 24); **AP4M built and verified live, then sidelined** (off by default, `CEREAL_AP4M=1`); Verifiable Intent not started |
+| **5** | **Pricing, accounting and visibility: quote-based budgets, tags, export, live feed, dashboard** | **quote-based pricing done** (testnet Oct 24, `make shop`); dashboard prototype by Gemini in `web/`; export endpoint and security-event recording next |
 | 6 | Submission: demo script, README, HACKATHON.md, video, answers | not built |
 
 ---
@@ -156,8 +156,25 @@ Built: merchant (`merchant.mjs`), agent CLI (`pay.mjs --resource --amount --cap 
 | `make x402` | d_e94725: approved on Ledger, device-only funding `9CC32A3B…`; vendor B's paywall refused (revocation `3FF46EE4…`); bought agenda `3E9FDF0D…` and speakers `A2E6DE13…`. d_e51b8c: funding `CF3AED22…`; agenda `A00477CD…`, speakers `49DB5D5A…`. Main wallet 14.9977 → 13.9977 RLUSD = the four 0.25 payments, reconciled |
 | `make acceptance` Part 4 (own service :8014, vendor A paywall :8010, revoked vendor B paywall :8016) | passed Oct 24 in 1 min 52 s: paid A's paywall `5417BD92…` (t54 attestation `ready`); this run hit `409 settlement_status_unknown`, confirmed on-ledger and re-presented, resource served; on-ledger Signers = {subagent, cereal}, `SigningPubKey ""`, InvoiceID bound, cereal memo first; record resolved to `tesSUCCESS`; B's paywall refused with revocation `3FF46EE4…` and the subwallet's Sequence unchanged; `price_above_limit` sent nothing; main wallet −0.25 RLUSD. Evidence JSON in `exports/` |
 
-## Part 5 — accounting and visibility (after Part 4)
-Tags (hmac of team/project/task) on every memo, `cereal/export.py` CSV across subwallets and AP4M receipts (built), QuickNode endpoint and one webhook feeding the payment list, and a dashboard showing the tree main → subagents → payments.
+## Part 5 — pricing, accounting and visibility
+**What it proves.** The main agent never guesses a budget. It reads what vendors sell, takes the binding price from each item's 402, checks every vendor's credential on-ledger, buys from the cheapest trusted vendor, and gives each subagent exactly the quote plus a small buffer. Claude, when a key is set, only chooses which items the goal needs; the money is computed by cereal and enforced by cereal and the ledger.
+
+### p5.1 Vendor catalogs — `x402/server.py`  ✅
+Per-item prices (`X402_ITEMS`), one paywall per item, free `GET /catalog`. Demo vendors: A trusted (agenda 0.25, speakers 0.25, `make vendor`), B revoked and cheapest (0.05 each, `make vendor-b`), C trusted (agenda 0.15, speakers 0.30, `make vendor-c`; `r3NdoyQh…`, credential `83C0A7F0…`/`BC78C286…`).
+
+### p5.2 Pricing engine and the shopping main agent — `cereal/pricing.py`, `make shop`  ✅
+`plan(goal, envelope)`: needs from the goal (Claude picks catalog items, else word matching), offers per need (catalog, 402 quote, on-ledger credential), cheapest trusted wins, fallbacks kept if they fit, skipped vendors recorded with evidence; budget = quote + max(20 %, 0.05) rounded up; refuses `over_envelope` and `no_trusted_vendor`. The main agent deploys one subagent per need with its budget and its plan (`POST /subagents {plan}`); the subagent pays at most the quoted price and falls back in order (`--buy url@max|url@max`). `python -m cereal.pricing "<goal>"` prints a plan without spending.
+
+**Verified on testnet Sat Oct 24 (`make shop`, goal "Pull the Swell agenda and speaker list", envelope 2):**
+| Check | Evidence |
+|---|---|
+| Plan | agenda: C 0.15 chosen, A 0.25 over budget, B 0.05 skipped (revoked `3FF46EE4…`), budget 0.20; speakers: A 0.25 chosen, C 0.30 fallback, B skipped, budget 0.30; 0.50 locked, 1.50 stays in the main wallet |
+| d_6cc577 (agenda) | owner approved 0.2 on Ledger, device-only funding `D5F50BCB…`, paid C 0.15 `EDE22D06…`, returned 0.05 |
+| d_684aaf (speakers) | owner approved 0.3, funding `23469484…`, paid A 0.25 `553FAAA6…`, returned 0.05 |
+| Reconcile | main wallet 10.7477 → 10.3477 RLUSD = the two payments |
+
+### p5.3 Accounting, live feed, dashboard (next)
+Tags (HMAC of team/project/task) are on every memo; `cereal/export.py` CSV exists from the early design and needs an endpoint over all rails. Security events (hijack layer 2, stolen keys) need recording on the deployment. Dashboard: Gemini's prototype in `web/` (read-only, GET-only proxy); the UI team builds from the published dashboard brief.
 
 ## Part 6 — submission (Sun 09:00 code lock → 12:00 submit)
 Update `docs/DEMO-SCRIPT.md` to the main-agent/subagent story; README with the live URL first and the primitives table; `HACKATHON.md` (what was built after Sat 10:00 with commit links, what is mocked); 2–3 minute video; submission answers; opt into the bounties.
