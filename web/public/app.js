@@ -375,7 +375,7 @@ function renderTimeline(dep) {
     const lockLinks = hashes.lock
       .filter(Boolean)
       .map((h, idx) => {
-        const labels = ['TrustSet', 'SignerListSet (quorum 2)', 'SetRegularKey (master disabled)'];
+        const labels = ['TrustSet', 'SignerListSet (quorum 2)', 'AccountSet (master disabled)'];
         return xrplTxLink(h, labels[idx] || `Lock #${idx + 1}`);
       })
       .join(' ');
@@ -500,7 +500,7 @@ function renderTimeline(dep) {
   if (Array.isArray(hashes.reclaim) && hashes.reclaim.length > 0) {
     const reclaimLinks = hashes.reclaim
       .filter(Boolean)
-      .map((h, i) => xrplTxLink(h, i === 0 ? 'Sweep RLUSD' : 'Claw TrustSet 0'))
+      .map((h, i) => xrplTxLink(h, i === 0 ? 'Sweep RLUSD' : 'TrustSet 0 (close trust line)'))
       .join(' ');
     rows.push(`
       <div class="timeline-row">
