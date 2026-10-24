@@ -368,7 +368,7 @@ def _owner_approves_payment(rec: dict, agent_signed: Transaction, amt, threshold
                 "result": "approved" if signed.get("ok") else signed.get("result"), "screens": signed.get("screens", [])}
     if not signed.get("ok"):
         return _refuse(signed.get("result") or "device_error", requested=amt.value, threshold=str(threshold),
-                       approval=approval, sent_transactions=0)
+                       approval=approval, sent_transactions=0, error=str(signed.get("error") or "")[-300:] or None)
     combined = multisign(base, [agent_signed, Transaction.from_xrpl(decode(signed["signedBlob"]))])
     entry = {"to": agent_signed.destination, "amount": amt.value, "approved_by": "ledger", "approval": approval,
              "at": datetime.now(timezone.utc).isoformat()}

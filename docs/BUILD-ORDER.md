@@ -174,6 +174,12 @@ Per-item prices (`X402_ITEMS`), one paywall per item, free `GET /catalog`. Demo 
 | Reconcile | main wallet 10.7477 → 10.3477 RLUSD = the two payments |
 | Plan lock (`make shop`, second run) | each subagent may pay only its plan's vendors (`allowed_payees` = pick + fallbacks). d_defbdc (agenda, may pay C only) tried trusted vendor A: `payee_not_allowed`, nothing sent; bought from C `8FBEA0CD…`. d_aadcbc (speakers, may pay A or C) bought from A `83F002A4…`. Main wallet 10.3477 → 9.9477 RLUSD, reconciled |
 
+### p5.12 cereal chat and the automatic sweeper — `cereal/chat.py`, `POST /chat`, `GET /chat/{id}`, `POST /sweep`, `GET /sweeps`  ✅
+One message in plain English: the hivemind reads the rules (limits card), works out what to buy, prices it only among the vendors you named, deploys one subagent wallet that carries exactly your rules and is funded to what the plan costs (your Ledger approves the budget), the subagent buys through cereal (your Ledger signs anything above your threshold), and the leftovers sweep home. The service's sweeper (every 60 s) reclaims expired wallets and retires subwallets the ledger lets us delete, so leftover RLUSD and the XRP reserve come home without anyone asking.
+
+### p5.13 Models: OpenRouter first, Anthropic fallback, deterministic without either — `cereal/llm.py`
+Claude Haiku 5.5 (OpenRouter `anthropic/claude-haiku-5.5`, Anthropic `claude-haiku-5-5`). A model only reads and proposes (the wallet sentence, what to buy, which tool to call next); cereal and the ledger enforce. A tool loop falls back to the next provider only if no tool ran yet, so a payment is never repeated; with no model the main agent and subagents run their deterministic plan. `CEREAL_LLM=off` for a fully deterministic demo.
+
 ### p5.4 Vendor list — `GET /vendors`  ✅
 Every vendor cereal knows (its vendor roles and every reachable catalog): name, address, items and prices, on-ledger credential, payments received and refusals.
 
@@ -195,6 +201,7 @@ One row per payment across wallets and rails: date, folder, wallet, deployment, 
 **Verified on testnet Sat Oct 24:**
 | Check | Evidence |
 |---|---|
+| `POST /chat` (Haiku 5.5 via OpenRouter, Speculos, testnet) | "Market research: spend up to 1 RLUSD today, only at Vendor A and Vendor C. Get the Swell agenda and the speaker list. Ask me above 0.2." → Claude read the rules exactly; plan C 0.15 + A 0.25 (B skipped, not on your list); Ledger approved 0.50 `1E0DE8DD…`; the Claude-driven subagent d_e48a68 bought the agenda from C signed subagent + cereal `79B24795…` and the speakers from A above the threshold signed subagent + owner's Ledger `FA7594B7…`; 0.10 swept home `B552E740…`. Sweeper retired 26 old subwallets (main wallet XRP 110 → 116.7) |
 | Wallet from a sentence (d_a6336c: 1 RLUSD, 2 days, Vendor A and C, threshold 0.2, sweep) | 0.15 to C signed by subagent + cereal `3909FD18…`; 0.25 to A signed by subagent + owner's Ledger, no cereal `1FF73366…`; revoked B refused; done swept 0.6 home |
 | Security log after `make beats` | stolen keys on the main wallet `tefBAD_SIGNATURE`; stolen-keys drain `tecPATH_PARTIAL` verified on-ledger `C121777E…`; hijack signing alone `tefBAD_QUORUM`; cereal refusals with revocation evidence; planner skips; the Ledger-approved large payment |
 | `make vendor-test` (vendor lists and blacklisting, live) | 10 of 10 passed Oct 24: wallet d_afc96f "only at Vendor C" approved on the Ledger `EE0F08CE…`; paid C `1CCC66DF…`; trusted A refused `payee_not_allowed`; blacklisted B refused with revocation `3FF46EE4…`; a brand-new address refused (no credential); C blacklisted live `28808253…` and the next payment refused citing exactly that transaction; C restored (accept `FFA88004…`) and paid again `EFFB5F34…`; 0.30 swept home; every refusal sent nothing (subwallet Sequence unchanged) |

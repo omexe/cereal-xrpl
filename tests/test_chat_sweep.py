@@ -70,7 +70,8 @@ def test_chat_turns_one_message_into_rules_a_subagent_a_purchase_and_a_sweep(sto
                   posted.append(("start", extra)) or {"started": d})
     def wait(self, d, timeout_s=0):
         self.logs[d] = [{"event": "start", "data": {"mode": "plan", "budget": "0.20"}},
-                        {"event": "buy", "data": {"ok": True, "resource": "http://c/swell/agenda", "price": "0.15", "explorer": "X"}}]
+                        {"event": "buy", "data": {"ok": True, "resource": "http://c/swell/agenda", "price": "0.15", "payee": "rC",
+                                          "explorer": "X"}}]
         return {"exit": 0}
     store.setattr(main_agent.MainAgent, "wait_subagent", wait)
     out = chat.run("Research: spend up to 1 RLUSD today only at Vendor C, get the agenda", say=lambda *a: None)
@@ -79,7 +80,8 @@ def test_chat_turns_one_message_into_rules_a_subagent_a_purchase_and_a_sweep(sto
     assert ("start", ["--buy", "http://c/swell/agenda@0.15"]) in posted
     text = " | ".join(m["text"] for m in out["messages"])
     assert "Vendor C at 0.15 RLUSD is the cheapest vendor you allowed; skipped Vendor A (not on your list)" in text
-    assert "Bought agenda for 0.15 RLUSD" in text and "Swept 0.05 RLUSD back to the main wallet" in text
+    assert "Bought agenda from Vendor C for 0.15 RLUSD (second signature: cereal)" in text
+    assert "Swept 0.05 RLUSD back to the main wallet" in text
     assert out["ok"] and out["returned"] == "0.05"
 
 

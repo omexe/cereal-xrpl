@@ -58,14 +58,15 @@ class Subagent:
         if req is None:
             return {"ok": False, "refused": "no_rlusd_option", "accepts": body.get("accepts")}
         if max_rlusd is not None and Decimal(str(req.amount)) > Decimal(str(max_rlusd)):
-            return {"ok": False, "refused": "price_above_limit", "price": str(req.amount), "limit": str(max_rlusd)}
+            return {"ok": False, "resource": url, "refused": "price_above_limit", "price": str(req.amount),
+                    "limit": str(max_rlusd)}
         r = self.record()
         tx = build_x402_payment(r["subwallet"], req, self.dep_id, r["tag"])
         co = requests.post(f"{config.SERVICE_URL}/cosign", timeout=900, json={  # may wait for the owner's Ledger
             "deployment_id": self.dep_id, "tx": agent_sign(tx, self.key, self.c).to_xrpl(), "present": True,
             "resource": url}).json()
         if not co.get("ok"):
-            return {"ok": False, "price": str(req.amount), "payee": req.pay_to, **co}
+            return {"ok": False, "resource": url, "price": str(req.amount), "payee": req.pay_to, **co}
         header = build_payment_header_for_signed_blob(
             req=req, signed_tx_blob=co["blob"], invoice_id=req.invoice_id(),
             resource=ResourceInfo.from_dict(body["resource"]) if isinstance(body.get("resource"), dict) else None)
@@ -78,7 +79,8 @@ class Subagent:
             retried = True
         settlement = decode_payment_response(paid.headers["PAYMENT-RESPONSE"]) if "PAYMENT-RESPONSE" in paid.headers else None
         ok = paid.status_code == 200 and bool(settlement and settlement.get("success"))
-        out = {"ok": ok, "status": paid.status_code, "price": str(req.amount), "payee": req.pay_to, "hash": co["hash"],
+        out = {"ok": ok, "resource": url, "status": paid.status_code, "price": str(req.amount), "payee": req.pay_to,
+               "hash": co["hash"], "approved_by": co.get("approved_by"),
                "explorer": f"{config.EXPLORER}/transactions/{co['hash']}", "data": _body(paid) if ok else None,
                "settlement": settlement}
         if retried:

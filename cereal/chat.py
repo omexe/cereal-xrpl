@@ -92,6 +92,7 @@ def run(message: str, folder: str | None = None, say: Callable[[str, str, str | 
                       [f"{f['url']}@{f['quote']['price']}" for f in l["fallbacks"]]) for l in p["lines"]]
     agent.start_subagent(dep["id"], f"{card['name']}: buy {plan_rec['item']}", extra=[x for sp in specs for x in ("--buy", sp)])
     w = agent.wait_subagent(dep["id"])
+    names = dict(zip(payees, directory_names(payees)))
     for ev in agent.logs.get(dep["id"], []):
         e, d = ev.get("event"), ev.get("data") or {}
         if e == "start":
@@ -100,11 +101,16 @@ def run(message: str, folder: str | None = None, say: Callable[[str, str, str | 
             _say("subagent", f"Model unavailable ({d.get('reason')}); following the plan instead")
         elif e == "buy" and d.get("ok"):
             signer = "your Ledger" if d.get("approved_by") == "ledger" else "cereal"
-            _say("subagent", f"Bought {d['resource'].rsplit('/', 1)[-1]} for {d.get('price')} RLUSD (co-signed by {signer})",
-                 d.get("explorer"))
+            what = (d.get("resource") or "").rsplit("/", 1)[-1] or "it"
+            _say("subagent", f"Bought {what} from {names.get(d.get('payee'), 'the vendor')} for {d.get('price')} RLUSD "
+                             f"(second signature: {signer})", d.get("explorer"))
         elif e in ("refused", "buy"):
-            _say("cereal", f"Refused {d.get('resource', '').rsplit('/', 1)[-1]}: {d.get('refused') or d.get('error') or d.get('status')}"
-                           " (nothing sent)")
+            what = (d.get("resource") or "").rsplit("/", 1)[-1] or "a purchase"
+            _say("cereal", f"Refused {what}: {d.get('refused') or d.get('error') or d.get('status')} (nothing sent)")
+        elif e == "done":
+            pass
+        elif e not in ("budget_left",) and isinstance(d, dict) and d.get("summary"):
+            _say("subagent", d["summary"])
     # 5. done → sweep home (the subagent reports done; make sure it's swept even if it didn't)
     rec = requests.get(f"{url}/subagents/{dep['id']}", timeout=60).json()
     if rec["status"] == "active":

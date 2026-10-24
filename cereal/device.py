@@ -14,6 +14,8 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
+import time
 import urllib.request
 
 from xrpl.clients import JsonRpcClient
@@ -22,6 +24,38 @@ from xrpl.models.transactions.transaction import Transaction
 
 from . import config
 from .ledger import prepare, submit_capture
+
+_one_at_a_time = threading.Lock()  # one device: two signing sessions at once can wedge the emulator
+
+
+def _screen() -> str:
+    try:
+        raw = urllib.request.urlopen(f"{config.SPECULOS_URL}/events?currentscreenonly=true", timeout=3).read()
+        return " | ".join(e.get("text", "") for e in json.loads(raw).get("events", []))
+    except Exception:
+        return ""
+
+
+def _press(button: str) -> None:
+    req = urllib.request.Request(f"{config.SPECULOS_URL}/button/{button}", method="POST",
+                                 data=json.dumps({"action": "press-and-release"}).encode(),
+                                 headers={"content-type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=3).read()
+    except Exception:
+        pass
+
+
+def reset() -> bool:
+    """Speculos only: reject whatever is half-reviewed on screen until the XRP app is idle again."""
+    for _ in range(60):
+        s = _screen()
+        if re.search(r"app is ready", s, re.I):
+            return True
+        _press("both" if re.search(r"reject", s, re.I) else "right")
+        time.sleep(0.3)
+    return bool(re.search(r"app is ready", _screen(), re.I))
+
 
 NOISE = re.compile(r"app is ready|transaction signed|^back$|^cancel$|^reject transaction$", re.I)
 
@@ -53,7 +87,19 @@ def sign(filled: Transaction, decision: str | None = None, timeout: int = 600) -
 
     decision: approve | reject | manual (Speculos button driver; manual waits for a human). Returns
     {ok, entry, signedBlob, address, screens} or {ok: False, result: owner_rejected | device_error, screens}.
+    One request at a time; a device error (never an owner's rejection) is retried once after clearing the screen.
     """
+    with _one_at_a_time:
+        out = _sign_once(filled, decision, timeout)
+        if not out.get("ok") and out.get("result") == "device_error" and (decision or config.DEVICE_DECISION) != "manual":
+            reset()
+            retry = _sign_once(filled, decision, timeout)
+            retry["retried_after_device_error"] = True
+            return retry
+        return out
+
+
+def _sign_once(filled: Transaction, decision: str | None, timeout: int) -> dict:
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
         json.dump(filled.to_xrpl(), f)
     env = {**os.environ, "DEVICE_DECISION": decision or config.DEVICE_DECISION, "SPECULOS_URL": config.SPECULOS_URL}

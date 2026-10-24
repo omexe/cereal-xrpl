@@ -156,3 +156,14 @@ def test_recover_stops_if_the_sweep_fails(monkeypatch):
                         {"ok": False, "result": "owner_rejected", "hash": None})
     steps = recover.recover("rSUB", _Lines([{"currency": "RLUSD"}]), to=MAIN)
     assert [n for n, _ in steps] == ["sweep"] and len(signed) == 1
+
+
+def test_a_device_error_is_retried_once_but_an_owner_rejection_never(monkeypatch):
+    seq = [{"ok": False, "result": "device_error"}, {"ok": True, "address": DEV}]
+    monkeypatch.setattr(device, "_sign_once", lambda tx, d, t: seq.pop(0))
+    monkeypatch.setattr(device, "reset", lambda: True)
+    out = device.sign(object(), "approve")
+    assert out["ok"] and out["retried_after_device_error"]
+    calls = []
+    monkeypatch.setattr(device, "_sign_once", lambda tx, d, t: calls.append(1) or {"ok": False, "result": "owner_rejected"})
+    assert device.sign(object(), "reject")["result"] == "owner_rejected" and calls == [1], "a no from the owner is final"
