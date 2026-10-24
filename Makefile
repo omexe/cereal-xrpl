@@ -40,6 +40,6 @@ rails:        ## sidelined: x402 + Mastercard AP4M on one budget (needs the serv
 device:       ## Part 3 demo: owner rejects a budget on the Ledger, approves two, recovers one subwallet alone
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --device
 retire:       ## retire reclaimed or recovered subwallets (demo + test stores) once ≥256 ledgers old; returns the XRP reserve; safe to rerun
-	@for f in deployments.json deployments.testnet.json deployments.testnet2.json deployments.testnet3.json deployments.testnet4.json; do \
+	@for f in deployments.json deployments.testnet.json deployments.testnet2.json deployments.testnet3.json deployments.testnet4.json deployments.testnet5.json; do \
 	  [ -f $$f ] && echo "== $$f" && CEREAL_DEPLOYMENTS_FILE=$$f .venv/bin/python -m cereal.main_agent --retire-all; \
 	done; true

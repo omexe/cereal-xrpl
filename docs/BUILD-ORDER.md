@@ -8,7 +8,7 @@ Build one part at a time. A part is done when its acceptance checks pass on test
 | **2** | **Vendor trust: on-ledger vendor credentials and revocation replace the Part 1 allowlist; refusal beats** | **done**: wired into the co-sign policy and the main agent flow; beats verified on testnet Oct 24 (hashes below) |
 | **3** | **Ledger device: owner approves deployments on the device; device is a recovery signer on every subwallet** | **done**: wired into deploy, the main agent and recovery; acceptance passed on testnet with Speculos Oct 24 (hashes below) |
 | **4** | **Payment rails: x402 via t54 and Mastercard AP4M on XRPL EVM** | **x402 done** (testnet Oct 24); **AP4M built and verified live, then sidelined** (off by default, `CEREAL_AP4M=1`); Verifiable Intent not started |
-| **5** | **Pricing, accounting and visibility: quote-based budgets, tags, export, live feed, dashboard** | **quote-based pricing done** (testnet Oct 24, `make shop`); dashboard prototype by Gemini in `web/`; export endpoint and security-event recording next |
+| **5** | **Pricing, wallets and visibility: quote-based budgets, plain-English wallets, Ledger approval above a threshold, security log, vendor list, export** | **done**: acceptance passed on testnet Oct 24 (hashes below); the UI team builds from the published dashboard brief |
 | 6 | Submission: demo script, README, HACKATHON.md, video, answers | not built |
 
 ---
@@ -174,8 +174,30 @@ Per-item prices (`X402_ITEMS`), one paywall per item, free `GET /catalog`. Demo 
 | Reconcile | main wallet 10.7477 → 10.3477 RLUSD = the two payments |
 | Plan lock (`make shop`, second run) | each subagent may pay only its plan's vendors (`allowed_payees` = pick + fallbacks). d_defbdc (agenda, may pay C only) tried trusted vendor A: `payee_not_allowed`, nothing sent; bought from C `8FBEA0CD…`. d_aadcbc (speakers, may pay A or C) bought from A `83F002A4…`. Main wallet 10.3477 → 9.9477 RLUSD, reconciled |
 
-### p5.3 Accounting, live feed, dashboard (next)
-Tags (HMAC of team/project/task) are on every memo; `cereal/export.py` CSV exists from the early design and needs an endpoint over all rails. Security events (hijack layer 2, stolen keys) need recording on the deployment. Dashboard: Gemini's prototype in `web/` (read-only, GET-only proxy); the UI team builds from the published dashboard brief.
+### p5.4 Vendor list — `GET /vendors`  ✅
+Every vendor cereal knows (its vendor roles and every reachable catalog): name, address, items and prices, on-ledger credential, payments received and refusals.
+
+### p5.5 Plain-English wallets — `POST /wallets/preview`, `POST /wallets`  ✅
+A sentence ("Market Sizing: spend up to 1 RLUSD over 2 days, only at Vendor A and Vendor C. Ask me above 0.2. Sweep back when done.") becomes a limits card: budget, duration, vendors resolved against the directory and checked on-ledger, approval threshold, sweep when done, with problems (unknown or untrusted vendor, over the cap, no budget) and defaults stated. Preview signs nothing; create rebuilds the card from the sentence, refuses `card_problems`, then deploys with the owner's Ledger approval. Claude parses when a key is set, a deterministic parser otherwise. Optional `folder`.
+
+### p5.6 Ledger approval above a threshold  ✅
+Per wallet (`approval_threshold`) and company-wide (`CEREAL_APPROVAL_THRESHOLD`); the lower wins. Above it cereal runs its checks but does not co-sign: the owner's Ledger shows the payment and signs instead (weight 2 + the subagent's 1 meets the quorum); a rejection sends nothing (`owner_rejected`). Works for direct and x402 payments.
+
+### p5.7 Security log — `GET /events`, `POST /subagents/{id}/events`  ✅
+One feed of every refused or out-of-policy attempt: who stopped it (owner, cereal, the ledger, the main agent), the reason in plain words, the outcome and the proof. Refusals that happen on the ledger itself (a hijacked subagent signing alone, stolen-keys attempts, lock checks) are reported by subagents and beats; with a hash cereal checks the ledger and marks the event verified only if the validated result matches.
+
+### p5.8 Plan preview — `GET /plan?goal=&envelope=`  ✅
+The quote-based plan, read-only.
+
+### p5.9 Accounting export — `GET /export.csv`, `GET /export.json`  ✅
+One row per payment across wallets and rails: date, folder, wallet, deployment, task, rail, vendor, payee, amount, currency, result, who signed, tx hash, explorer link, private tag, item; totals by wallet, vendor, rail and folder.
+
+**Verified on testnet Sat Oct 24:**
+| Check | Evidence |
+|---|---|
+| Wallet from a sentence (d_a6336c: 1 RLUSD, 2 days, Vendor A and C, threshold 0.2, sweep) | 0.15 to C signed by subagent + cereal `3909FD18…`; 0.25 to A signed by subagent + owner's Ledger, no cereal `1FF73366…`; revoked B refused; done swept 0.6 home |
+| Security log after `make beats` | stolen keys on the main wallet `tefBAD_SIGNATURE`; stolen-keys drain `tecPATH_PARTIAL` verified on-ledger `C121777E…`; hijack signing alone `tefBAD_QUORUM`; cereal refusals with revocation evidence; planner skips; the Ledger-approved large payment |
+| `make acceptance` Part 5 (own service :8015 with Speculos, paywalls A :8020, B :8022, C :8023) | passed Oct 24 in 2 min 16 s: vendor list (A and C valid, B revoked with evidence); plan preview C 0.15 / A 0.25, B skipped, 0.50 of 2, nothing deployed; the HubSpot/Clearbit/Apollo sentence refused `card_problems`, nothing deployed; wallet from a sentence approved on the Ledger (threshold 0.2, A and C, folder Market Research); x402 0.15 from C signed subagent + cereal `5304BC47…`; x402 0.25 from A signed subagent + owner's Ledger and accepted by t54 `12A2EEB4…`; a second large payment rejected on the device, Sequence unchanged; hijack signing alone `tefBAD_QUORUM` in the security log; done swept 0.60 home; export rows and signers match; main wallet −0.40. Evidence JSON in `exports/` |
 
 ## Part 6 — submission (Sun 09:00 code lock → 12:00 submit)
 Update `docs/DEMO-SCRIPT.md` to the main-agent/subagent story; README with the live URL first and the primitives table; `HACKATHON.md` (what was built after Sat 10:00 with commit links, what is mocked); 2–3 minute video; submission answers; opt into the bounties.
