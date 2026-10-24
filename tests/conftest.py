@@ -23,3 +23,4 @@ def _no_model_calls_unless_marked(request, monkeypatch):
     Testnet tests start services and subagents that inherit this environment, so they stay deterministic too."""
     if request.node.get_closest_marker("llm") is None:
         monkeypatch.setenv("CEREAL_LLM", "off")
+    monkeypatch.setenv("CEREAL_SWEEPER", "0")  # test services never sweep or retire in the background

@@ -104,15 +104,19 @@ def needs_from_goal(goal: str, items: list[str]) -> list[str]:
     return wanted
 
 
-def plan(goal: str, envelope: Decimal, bases: list[str] | None = None) -> dict:
-    """One subagent per needed item, each budgeted to its cheapest trusted quote plus buffer, within the envelope."""
+def plan(goal: str, envelope: Decimal, bases: list[str] | None = None, allowed: list[str] | None = None) -> dict:
+    """One subagent per needed item, each budgeted to its cheapest trusted quote plus buffer, within the envelope.
+    `allowed`: the vendors the owner named; every other offer is shown as skipped (not_on_your_list)."""
     c = client()
     cats = [x for x in (catalog(b) for b in (bases or config.VENDOR_URLS)) if x]
     items = sorted({it["item"] for cat in cats for it in cat.get("items", [])})
     needs = needs_from_goal(goal, items)
     lines, total = [], Decimal(0)
     for item in needs:
-        ch = choose(item, offers(item, [cat["base"] for cat in cats], c))
+        found = offers(item, [cat["base"] for cat in cats], c)
+        off_list = [o for o in found if allowed and o["payee"] not in allowed]
+        ch = choose(item, [o for o in found if not allowed or o["payee"] in allowed])
+        ch["rejected"] += [{**o, "reason": "not_on_your_list"} for o in off_list]
         if ch["chosen"]:
             price = Decimal(ch["chosen"]["quote"]["price"])
             budget = budget_for(price)
@@ -143,7 +147,8 @@ def summary(p: dict) -> list[str]:
             out.append(f"    · {f['vendor']} {f['quote']['price']} RLUSD (trusted, but over this budget)")
         for r in l["rejected"]:
             ev = r.get("evidence") or {}
-            why = f"{r['reason']}" + (f" ({ev.get('reason')}) {config.EXPLORER}/transactions/{ev['hash']}" if ev.get("hash") else "")
+            why = ("not on the vendors you named" if r["reason"] == "not_on_your_list" else f"{r['reason']}") + \
+                (f" ({ev.get('reason')}) {config.EXPLORER}/transactions/{ev['hash']}" if ev.get("hash") else "")
             price = r["quote"].get("price") or r.get("catalog_price")
             out.append(f"    ✗ {r['vendor']} {price} RLUSD skipped: {why}")
         if l["chosen"]:

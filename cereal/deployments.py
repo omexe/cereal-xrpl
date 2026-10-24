@@ -10,7 +10,7 @@ from decimal import Decimal
 from . import config
 from .ledger import job_tag
 
-_lock = threading.Lock()
+_lock = threading.RLock()  # every read-modify-write of the store holds it (API threads, the sweeper)
 LIVE = ("deploying", "active")
 
 
@@ -90,17 +90,19 @@ def record_payment(dep_id: str, entry: dict) -> None:
 
 
 def update_payment(dep_id: str, tx_hash: str, **fields) -> None:
-    d = _load()
-    for pmt in d[dep_id].get("payments", []):
-        if pmt.get("hash") == tx_hash:
-            pmt.update(fields)
-    _save(d)
+    with _lock:
+        d = _load()
+        for pmt in d[dep_id].get("payments", []):
+            if pmt.get("hash") == tx_hash:
+                pmt.update(fields)
+        _save(d)
 
 
 def record_event(dep_id: str, entry: dict) -> None:
-    d = _load()
-    d[dep_id].setdefault("events", []).append(entry)
-    _save(d)
+    with _lock:
+        d = _load()
+        d[dep_id].setdefault("events", []).append(entry)
+        _save(d)
 
 
 def record_refusal(dep_id: str, entry: dict) -> None:

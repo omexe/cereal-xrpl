@@ -23,7 +23,17 @@ from .burn import reclaim as ledger_reclaim, retire as ledger_retire
 from .fund import fund_burner, funding_payment
 from .ledger import account_info, client, cosign_and_submit, cosign_combine, decode_memos, prepare, rlusd_balance, submit_capture
 
-app = FastAPI(title="cereal service")
+from contextlib import asynccontextmanager
+
+
+@asynccontextmanager
+async def _lifespan(_app):
+    if __import__("os").getenv("CEREAL_SWEEPER", "1") != "0":  # the sweeper (defined below) starts with the service
+        threading.Thread(target=_sweeper_loop, daemon=True, name="cereal-sweeper").start()
+    yield
+
+
+app = FastAPI(title="cereal service", lifespan=_lifespan)
 _main_wallet = threading.Lock()  # one main-wallet transaction sequence at a time
 
 
@@ -79,6 +89,11 @@ class Ap4mRequest(BaseModel):
     max_rlusd: str = "0.25"  # the most this subagent will pay for the resource
 
 
+class ChatRequest(BaseModel):
+    message: str
+    folder: str | None = None
+
+
 class EventReport(BaseModel):
     kind: str            # hijack_alone | stolen_keys_drain | stolen_keys_main_wallet | prove_lock
     result: str          # the ledger's code, e.g. tefBAD_QUORUM, tecPATH_PARTIAL, tefBAD_SIGNATURE
@@ -117,6 +132,7 @@ def main_wallet() -> dict:
     return {"address": addr, "xrp": str(int(account_info(c, addr)["Balance"]) / 1_000_000),
             "rlusd": str(rlusd_balance(c, addr)), "outstanding_budget": str(deployments.outstanding_budget()),
             "active_subagents": len(deployments.active()),
+            "recent_sweeps": recent_sweeps(5),
             "policy": {"vendor_credentials": config.REQUIRE_VENDOR_CREDENTIAL, "issuer": config.address("CREDENTIAL_ISSUER"),
                        "device_funding": config.DEVICE_FUNDING, "ledger_recovery": config.LEDGER_RECOVERY,
                        "device": config.LEDGER_ADDRESS, "ap4m": {"enabled": config.AP4M_ENABLED, **ap4m.available()}},
@@ -458,6 +474,90 @@ def export_csv():
     from . import books
     return Response(books.to_csv(books.rows()), media_type="text/csv",
                     headers={"Content-Disposition": "attachment; filename=cereal-payments.csv"})
+
+
+# ---- chat: one plain-English message → rules → subagent → purchase → sweep (cereal/chat.py) ----
+_chats: dict[str, dict] = {}
+
+
+@app.post("/chat")
+def chat_start(req: ChatRequest) -> dict:
+    """Start the chat flow in the background; poll GET /chat/{chat_id} for its messages."""
+    import uuid
+    from . import chat
+    cid = "c_" + uuid.uuid4().hex[:6]
+    _chats[cid] = {"chat_id": cid, "status": "running", "message": req.message, "messages": []}
+
+    def work():
+        try:
+            res = chat.run(req.message, req.folder, say=lambda who, text, link: _chats[cid]["messages"].append(
+                {"who": who, "text": text, "link": link, "at": datetime.now(timezone.utc).isoformat()}))
+            _chats[cid].update(status="done", ok=res.get("ok"), deployment=res.get("deployment"),
+                               spent=res.get("spent"), returned=res.get("returned"))
+        except Exception as e:  # report, never hang the UI
+            _chats[cid].update(status="failed", error=f"{type(e).__name__}: {e}"[:300])
+    threading.Thread(target=work, daemon=True).start()
+    return {"chat_id": cid, "status": "running"}
+
+
+@app.get("/chat/{cid}")
+def chat_status(cid: str) -> dict:
+    if cid not in _chats:
+        raise HTTPException(404, "unknown chat")
+    return _chats[cid]
+
+
+# ---- sweeper: leftovers go home without anyone asking ----
+SWEEP_SECONDS = int(__import__("os").getenv("CEREAL_SWEEP_SECONDS", "60"))
+
+
+def sweep_once() -> dict:
+    """Reclaim every active wallet past its expiry (leftover RLUSD home), and retire every reclaimed or recovered
+    subwallet the ledger now lets us delete (its XRP reserve home). Safe to run any time."""
+    swept, retired = [], []
+    now = datetime.now(timezone.utc)
+    for r in deployments.all_():
+        try:
+            if r["status"] == "active" and r.get("subwallet") and datetime.fromisoformat(r["expires_at"]) <= now:
+                res = reclaim(r["id"])
+                if res.get("ok"):
+                    deployments.update(r["id"], swept_by="expiry")
+                    swept.append({"deployment": r["id"], "returned": res.get("returned")})
+            elif r["status"] in ("reclaimed", "recovered") and r.get("subwallet"):
+                res = retire(r["id"])
+                if res.get("ok"):
+                    retired.append({"deployment": r["id"], "hash": res.get("hash")})
+        except Exception:
+            continue  # one bad record never stops the sweep
+    return {"swept": swept, "retired": retired, "at": now.isoformat()}
+
+
+@app.post("/sweep")
+def sweep_now() -> dict:
+    """Run the sweeper once now."""
+    return sweep_once()
+
+
+@app.get("/sweeps")
+def recent_sweeps(limit: int = 10) -> list[dict]:
+    """Leftovers that came home, newest first: which wallet, how much, why (done, expiry, owner recovery)."""
+    out = [{"deployment": r["id"], "wallet": r.get("name") or r.get("task"), "returned": r.get("returned"),
+            "at": r.get("reclaimed_at") or r.get("recovered_at"),
+            "why": "expired" if r.get("swept_by") == "expiry" else ("owner's Ledger" if r["status"] == "recovered"
+                                                                    else "finished"),
+            "hash": ((r.get("hashes") or {}).get("reclaim") or [None])[0]}
+           for r in deployments.all_() if r.get("reclaimed_at") or r.get("recovered_at")]
+    return sorted(out, key=lambda x: x["at"] or "", reverse=True)[:limit]
+
+
+def _sweeper_loop():
+    import time as _t
+    while True:
+        _t.sleep(SWEEP_SECONDS)
+        try:
+            sweep_once()
+        except Exception:
+            pass
 
 
 @app.get("/events")

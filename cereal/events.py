@@ -24,6 +24,7 @@ PLAIN = {
     "tefBAD_SIGNATURE": "these keys can't touch the main wallet",
     "vendor_revoked": "skipped while planning: the vendor's credential is revoked",
     "vendor_pending": "skipped while planning: the vendor hasn't accepted its credential",
+    "not_on_your_list": "skipped while planning: not one of the vendors you named",
     "cap_exceeded": "company limit reached",
 }
 REPORTABLE = {  # events a subagent or demo beat may report; each is a refusal by the ledger itself
