@@ -189,11 +189,20 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lo
     print("\nretire the subwallets in ~15 minutes: python -m cereal.main_agent --retire-all")
 
 
-def retire_all() -> None:
-    for r in _get("/subagents"):
+def retire_all() -> int:
+    """AccountDelete every reclaimed subwallet in CEREAL_DEPLOYMENTS_FILE (default deployments.json).
+
+    Runs in-process, so it works without the service and on the test stores. Returns how many are still too young.
+    """
+    from . import deployments
+    from .service import retire
+    waiting = 0
+    for r in deployments.all_():
         if r["status"] == "reclaimed":
-            out = _post(f"/subagents/{r['id']}/retire")
+            out = retire(r["id"])
+            waiting += out.get("refused") == "too_young"
             print(r["id"], r["subwallet"], out.get("result") or out.get("refused"), out.get("hash") or out.get("ready_in_ledgers", ""))
+    return waiting
 
 
 def main() -> None:
@@ -204,7 +213,7 @@ def main() -> None:
     ap.add_argument("--beats", action="store_true", help="Part 2 demo: revoked vendor, hijack, stolen keys")
     a = ap.parse_args()
     if a.retire_all:
-        return retire_all()
+        sys.exit(1 if retire_all() else 0)  # non-zero while some are still too young
     run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats)
 
 
