@@ -14,6 +14,7 @@ def isolated_store(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "MAX_SUBAGENT_BUDGET", 5.0)
     monkeypatch.setattr(config, "MAX_OUTSTANDING_BUDGET", 6.0)
     monkeypatch.setattr(config, "MAX_ACTIVE_SUBAGENTS", 2)
+    monkeypatch.setattr(config, "REQUIRE_VENDOR_CREDENTIAL", False)  # Part 1 semantics: allowlist only
 
 
 def test_per_subagent_cap():

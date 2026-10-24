@@ -28,8 +28,20 @@ _main_wallet = threading.Lock()  # one main-wallet transaction sequence at a tim
 class DeployRequest(BaseModel):
     task: str
     budget: str
-    allowed_payees: list[str] = []
+    allowed_payees: list[str] = []  # optional narrower filter; empty = any vendor credentialed for vendor_class
     expires_in_hours: float = 24
+    vendor_class: str = "data"
+
+
+class VendorIssueRequest(BaseModel):
+    vendor_class: str = "data"
+    days: float | None = None
+
+
+class VendorRevokeRequest(BaseModel):
+    reason: str
+    report: str = ""
+    vendor_class: str = "data"
 
 
 class CosignRequest(BaseModel):
@@ -69,6 +81,7 @@ def main_wallet() -> dict:
     return {"address": addr, "xrp": str(int(account_info(c, addr)["Balance"]) / 1_000_000),
             "rlusd": str(rlusd_balance(c, addr)), "outstanding_budget": str(deployments.outstanding_budget()),
             "active_subagents": len(deployments.active()),
+            "policy": {"vendor_credentials": config.REQUIRE_VENDOR_CREDENTIAL, "issuer": config.address("CREDENTIAL_ISSUER")},
             "caps": {"MAX_SUBAGENT_BUDGET": config.MAX_SUBAGENT_BUDGET,
                      "MAX_OUTSTANDING_BUDGET": config.MAX_OUTSTANDING_BUDGET,
                      "MAX_ACTIVE_SUBAGENTS": config.MAX_ACTIVE_SUBAGENTS}}
@@ -79,14 +92,16 @@ def deploy(req: DeployRequest) -> dict:
     refused = deployments.check_caps(req.budget)
     if refused:
         return refused
-    payees = req.allowed_payees or [config.address("VENDOR_A")]
+    payees = list(req.allowed_payees)
+    if not payees and not config.REQUIRE_VENDOR_CREDENTIAL:
+        return _refuse("no_payee_policy", hint="vendor credentials are off: pass allowed_payees")
     c = client(); main_addr = config.address("TREASURY")
     with _main_wallet:
         if rlusd_balance(c, main_addr) < Decimal(req.budget):
             return _refuse("insufficient_main_balance", rlusd=str(rlusd_balance(c, main_addr)), requested=req.budget)
         if Decimal(int(account_info(c, main_addr)["Balance"])) / 1_000_000 < subwallets.activation_xrp(c) + 1:
             return _refuse("insufficient_main_xrp")
-        rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours)
+        rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours, req.vendor_class)
         sub_key = keystore.new_subagent_key(rec["id"])
         deployments.update(rec["id"], subagent=sub_key)
         made = subwallets.create(rec["id"], rec["tag"], req.budget, sub_key, c)
@@ -165,13 +180,13 @@ def _cosign_deployment(rec: dict | None, tx_json: dict) -> dict:
     tx = Transaction.from_xrpl(tx_json)
     if tx.transaction_type.value != "Payment" or tx.account != rec["subwallet"]:
         return _refuse("not_a_subwallet_payment", account=tx.account, type=tx.transaction_type.value)
-    if tx.destination not in rec["allowed_payees"]:
-        return _refuse("payee_not_allowed", payee=tx.destination, allowed=rec["allowed_payees"])
     c = client()
-    if config.REQUIRE_VENDOR_CREDENTIAL:  # Part 2
-        v = vendors.check(c, tx.destination)
+    if config.REQUIRE_VENDOR_CREDENTIAL:  # Part 2: trust comes from the ledger, not from a list we keep
+        v = vendors.check(c, tx.destination, vendor_class=rec.get("vendor_class", "data"))
         if v["status"] != "valid":
-            return _refuse("vendor_not_credentialed", vendor=v)
+            return _refuse("vendor_not_credentialed", payee=tx.destination, vendor=v)
+    if rec["allowed_payees"] and tx.destination not in rec["allowed_payees"]:  # optional narrower filter
+        return _refuse("payee_not_allowed", payee=tx.destination, allowed=rec["allowed_payees"])
     amt = tx.amount
     if not isinstance(amt, IssuedCurrencyAmount) or amt.currency != config.RLUSD_CURRENCY:
         return _refuse("not_rlusd", amount=str(amt))
@@ -192,8 +207,32 @@ def _cosign_deployment(rec: dict | None, tx_json: dict) -> dict:
 @app.post("/cosign")
 def cosign(req: CosignRequest) -> dict:
     if req.deployment_id:
-        return _cosign_deployment(deployments.get(req.deployment_id), req.tx)
+        result = _cosign_deployment(deployments.get(req.deployment_id), req.tx)
+        if result.get("refused"):
+            amt = req.tx.get("Amount")
+            deployments.record_refusal(req.deployment_id, {
+                "payee": req.tx.get("Destination"), "amount": amt.get("value") if isinstance(amt, dict) else amt,
+                **result, "at": datetime.now(timezone.utc).isoformat()})
+        return result
     if req.job_id:  # legacy single-job path
         from .cosign import CosignRequest as LegacyRequest, cosign as legacy
         return legacy(LegacyRequest(job_id=req.job_id, tx=req.tx))
     return _refuse("missing_deployment_id")
+
+
+# ---- vendor registry (cereal's CREDENTIAL_ISSUER; vendors accept with their own key) ----
+@app.get("/vendors/{address}")
+def vendor_status(address: str, vendor_class: str = "data") -> dict:
+    return vendors.check(client(), address, vendor_class=vendor_class)
+
+
+@app.post("/vendors/{address}/issue")
+def vendor_issue(address: str, req: VendorIssueRequest) -> dict:
+    return vendors.issue(config.wallet("CREDENTIAL_ISSUER"), address, client(), vendor_class=req.vendor_class, days=req.days)
+
+
+@app.post("/vendors/{address}/revoke")
+def vendor_revoke(address: str, req: VendorRevokeRequest) -> dict:
+    """One public transaction blocks this vendor for every cereal customer."""
+    return vendors.revoke(config.wallet("CREDENTIAL_ISSUER"), address, client(), req.reason, req.report,
+                          vendor_class=req.vendor_class)

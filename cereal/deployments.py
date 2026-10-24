@@ -48,13 +48,14 @@ def check_caps(budget: str) -> dict | None:
     return None
 
 
-def create(task: str, budget: str, allowed_payees: list[str], expires_in_hours: float = 24) -> dict:
+def create(task: str, budget: str, allowed_payees: list[str], expires_in_hours: float = 24,
+           vendor_class: str = "data") -> dict:
     with _lock:
         d = _load()
         dep_id = "d_" + uuid.uuid4().hex[:6]
         rec = {
             "id": dep_id, "parent": "main", "task": task, "budget": str(budget), "currency": "RLUSD",
-            "allowed_payees": list(allowed_payees),
+            "allowed_payees": list(allowed_payees), "vendor_class": vendor_class, "refusals": [],
             "expires_at": (datetime.now(timezone.utc) + timedelta(hours=expires_in_hours)).isoformat(),
             "tag": job_tag("main", dep_id, "subagent"), "subwallet": None, "subagent": None,
             "status": "deploying", "hashes": {}, "payments": [], "summary": None,
@@ -86,6 +87,13 @@ def merge_hashes(dep_id: str, **hashes) -> dict:
 def record_payment(dep_id: str, entry: dict) -> None:
     with _lock:
         d = _load(); d[dep_id]["payments"].append(entry); _save(d)
+
+
+def record_refusal(dep_id: str, entry: dict) -> None:
+    with _lock:
+        d = _load()
+        if dep_id in d:
+            d[dep_id].setdefault("refusals", []).append(entry); _save(d)
 
 
 def public(rec: dict) -> dict:

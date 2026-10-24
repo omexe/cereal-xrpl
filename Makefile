@@ -1,5 +1,5 @@
 PY=.venv/bin/python
-.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent export ledger-check
+.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats export ledger-check
 setup:        ## venv + deps
 	python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 pool:         ## create/load roles → .env (run early: burners must age 256 ledgers)
@@ -23,3 +23,5 @@ ledger-check: ## Speculos signing preflight (needs the speculos-xrp container)
 	cd ledger && npm run --silent speculos:check
 main-agent:   ## Part 1 demo: one goal → two subagents in two subwallets → reclaim
 	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list from vendor A" --envelope 2 --subagents 2
+beats:        ## Part 2 demo: revoked vendor refused with evidence, hijack stopped twice, stolen keys capped
+	$(PY) -m cereal.main_agent --goal "Pull the Swell agenda and speaker list" --envelope 2 --subagents 2 --beats

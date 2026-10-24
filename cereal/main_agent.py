@@ -48,11 +48,12 @@ class MainAgent:
         """Deploy a subagent for one task into a new subwallet funded with exactly `budget` RLUSD."""
         return _post("/subagents", {"task": task, "budget": str(budget), "allowed_payees": allowed_payees or self.payees})
 
-    def start_subagent(self, deployment_id: str, task: str, payments: int = 2) -> dict:
+    def start_subagent(self, deployment_id: str, task: str, payments: int = 2, extra: list[str] | None = None) -> dict:
         """Launch the subagent process for a deployment (it signs with its own key only)."""
         cmd = [sys.executable, "-m", "cereal.subagent", deployment_id, task, "--payments", str(payments)]
         if self.prove_lock:
             cmd.append("--prove-lock")
+        cmd += extra or []
         self.procs[deployment_id] = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                                                      cwd=str(config.ROOT))
         return {"started": deployment_id}
@@ -73,6 +74,14 @@ class MainAgent:
     def list_subagents(self) -> list:
         """Every deployment with status and live balance."""
         return _get("/subagents")
+
+    def run_beat(self, name: str, deployment_id: str) -> list[dict]:
+        """Run a demo beat process (e.g. stolen-keys) and return its events. The main agent itself holds no keys."""
+        p = subprocess.run([sys.executable, "-m", "cereal.beats", name, deployment_id], capture_output=True, text=True,
+                           cwd=str(config.ROOT), timeout=240)
+        events = [json.loads(l) for l in p.stdout.splitlines() if l.startswith("{")]
+        self.logs.setdefault(deployment_id, []).extend(events)
+        return events
 
     def reclaim_subagent(self, deployment_id: str) -> dict:
         """Sweep what is left in a subagent's subwallet back to the main wallet and close its trust line."""
@@ -95,8 +104,24 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict) -> N
         print(f"│     lock     " + ", ".join(x[:10] + "…" for x in h.get("lock", []) if x))
         print(f"│     fund     {EXPLORER}/transactions/{h.get('fund')}")
         for ev in agent.logs.get(dep_id, []):
-            if ev.get("event") == "prove_lock":
-                print(f"│     alone    {ev['data'].get('result')} (subagent signed by itself)")
+            e, d = ev.get("event"), ev.get("data", {})
+            if e == "prove_lock":
+                print(f"│     alone    {d.get('result')} (subagent signed by itself)")
+            elif e == "hijack_instruction":
+                print(f"│     hijack   injected: \"{d.get('text')}\"")
+            elif e == "hijack_policy":
+                print(f"│       layer 1 cereal: {d.get('refused') or d.get('result')} ({(d.get('vendor') or {}).get('status', '')})")
+            elif e == "hijack_alone":
+                print(f"│       layer 2 ledger: {d.get('result')} (agent went rogue and signed alone)")
+            elif e == "stolen_keys":
+                print(f"│     stolen keys: {d.get('attempt')}: {d.get('result')}"
+                      + (f"  {EXPLORER}/transactions/{d['hash']}" if d.get("hash") else ""))
+        for f in r.get("refusals", []):
+            v = f.get("vendor") or {}
+            ev = (v.get("revocation") or {}).get("hash")
+            if (v.get("status") or f.get("refused")) and f.get("payee") and f.get("refused") == "vendor_not_credentialed" and ev:
+                print(f"│     refused  {f['payee'][:10]}… vendor {v.get('status')}: {(v.get('revocation') or {}).get('reason', '')} "
+                      f"(public revocation {EXPLORER}/transactions/{ev})")
         for p in r["payments"]:
             print(f"│     pay {p['amount']} → {p['to'][:10]}…  {p.get('result')}  {EXPLORER}/transactions/{p.get('hash')}")
         for x in h.get("reclaim", []) or []:
@@ -107,9 +132,11 @@ def print_tree(agent: MainAgent, ids: list[str], before: dict, after: dict) -> N
           f"{'reconciled ✓' if abs(delta - paid) < Decimal('0.000001') else 'MISMATCH'}")
 
 
-def run(goal: str, envelope: Decimal, n: int, payees: list[str], prove_lock: bool) -> None:
-    agent = MainAgent(payees, prove_lock)
-    before = agent.main_wallet()
+def run(goal: str, envelope: Decimal, n: int, payees: list[str] | None, prove_lock: bool, beats: bool = False) -> None:
+    before = _get("/main")
+    if payees is None:  # Part 2: any vendor credentialed on-ledger; Part 1: allowlist vendor A
+        payees = [] if before.get("policy", {}).get("vendor_credentials") else [config.address("VENDOR_A")]
+    agent = MainAgent(payees, prove_lock or beats)
     print(f"goal: {goal}\nenvelope: {envelope} RLUSD · main wallet {before['rlusd']} RLUSD · caps {before['caps']}")
     ids: list[str] = []
     if llm.available():
@@ -137,14 +164,23 @@ def run(goal: str, envelope: Decimal, n: int, payees: list[str], prove_lock: boo
                                    on_event=lambda name, out: print(f"  · {name}: {json.dumps(out, default=str)[:160]}"))
         print("\nmain agent report:", report)
     else:
-        for task, budget in plan_even(goal, envelope, n):
+        for i, (task, budget) in enumerate(plan_even(goal, envelope, n)):
             r = agent.deploy_subagent(task, budget)
             print(f"deploy {budget} RLUSD → {r.get('id')} {r.get('subwallet')} {'ok' if r.get('ok') else r}")
             if r.get("ok"):
-                ids.append(r["id"]); agent.start_subagent(r["id"], task)
+                ids.append(r["id"])
+                extra = []
+                if beats and i == 0:  # tries the revoked vendor first, falls back to a credentialed one
+                    extra = ["--vendors", f"{config.address('VENDOR_B')},{config.address('VENDOR_A')}"]
+                if beats and i == 1:  # receives a prompt-injected instruction after its purchases
+                    extra = ["--hijack"]
+                agent.start_subagent(r["id"], task, extra=extra)
         for d in ids:
             w = agent.wait_subagent(d)
             print(f"subagent {d} finished (exit {w['exit']})")
+        if beats and len(ids) > 1:
+            for ev in agent.run_beat("stolen-keys", ids[1]):
+                print(f"beat stolen-keys {ids[1]}: {ev['data']['attempt']}: {ev['data'].get('result')}")
         for d in ids:
             rc = agent.reclaim_subagent(d)
             print(f"reclaim {d}: returned {rc.get('returned')} RLUSD {'ok' if rc.get('ok') else rc}")
@@ -165,10 +201,11 @@ def main() -> None:
     ap.add_argument("--goal"); ap.add_argument("--envelope", default="2"); ap.add_argument("--subagents", type=int, default=2)
     ap.add_argument("--payee", action="append"); ap.add_argument("--prove-lock", action="store_true")
     ap.add_argument("--retire-all", action="store_true")
+    ap.add_argument("--beats", action="store_true", help="Part 2 demo: revoked vendor, hijack, stolen keys")
     a = ap.parse_args()
     if a.retire_all:
         return retire_all()
-    run(a.goal, Decimal(a.envelope), a.subagents, a.payee or [config.address("VENDOR_A")], a.prove_lock)
+    run(a.goal, Decimal(a.envelope), a.subagents, a.payee, a.prove_lock, a.beats)
 
 
 if __name__ == "__main__":
