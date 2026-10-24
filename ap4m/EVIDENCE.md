@@ -14,7 +14,9 @@
 
 ---
 
-## Live Run Evidence (Pending XRP Gas + `ap4m/.env` Private Key)
+## Live Run Evidence (Oct 24, 2026, ~21:00 UTC)
+
+First live run by Gemini from its clone (job `d_ap4m01`, 0.25 RLUSD, cap 1), after Andrew saved the agent key and Claude bridged 5 XRP of gas to the agent wallet (XRPL testnet tx `885A558F…` through Axelar's testnet gateway). Every hash below was re-checked on-chain from the main clone: the `VoucherRedeemed` log, the payout wallet's RLUSD balance, and the receipt.
 
 Once `ap4m/.env` is populated with `AGENT_PRIVATE_KEY` and the wallet holds XRP gas from `https://faucet.testevm.ripple.com`, run:
 ```bash
@@ -34,10 +36,10 @@ node ap4m/verify.mjs <receipt_id>
 | Step | Output / Transaction Hash |
 |---|---|
 | **Over-cap refusal (`--amount 1.50 --cap 1`)** | `{"ok":false,"rail":"ap4m","refused":"over_cap","amount":"1.50","cap":"1","job":"d_ap4m01","tag":"7f3a9c12","message":"Requested payment 1.50 RLUSD exceeds channel cap 1 RLUSD"}` (exit code `1`) |
-| **Channel ID (`--cap 1`)** | _pending live run_ |
-| **`VoucherRedeemed` tx (`redeem_tx`)** | _pending live run_ |
-| **Claim ID (`claim_id`)** | _pending live run_ |
-| **Vault Payout tx (`payout_tx`)** | _pending live run_ |
-| **Settlement Recorded tx (`settlement_tx`)** | _pending live run_ |
-| **Merchant Payout RLUSD Delta** | _pending live run_ |
-| **Verified Receipt (`ap4m.claim-receipt.v1`)** | _pending live run_ |
+| **Channel ID (`--cap 1`)** | `0x2c34d28c8f558324a937f4880f7066cad00ef686e7f3bc6a8771c45363d6bdb9`, opened by the agent in vault tx [`0xea9584df…`](https://explorer.testnet.xrplevm.org/tx/0xea9584df9b4351ceee8a01e3c49630bc8644ae5e706e9c43eea57f011e7a543e) (20:58:49 UTC) |
+| **`VoucherRedeemed` tx (`redeem_tx`)** | [`0x701727ff6b4fa8dd6685aa467c4772f7a52cc55117600901de453b5c1082196c`](https://explorer.testnet.xrplevm.org/tx/0x701727ff6b4fa8dd6685aa467c4772f7a52cc55117600901de453b5c1082196c) on PaymentLedger, block 9224046: amount 0.25, cumulative 0.25, payout `0x4A7e…9c44` |
+| **Claim ID (`claim_id`)** | `0x35c57918aa1f1c07da331a2f1069f1c96e7e43e55ece1cbc95114cf459097b73` |
+| **Vault Payout tx (`payout_tx`)** | [`0xf7cf03425db8c1e09e7c5442956c99590e117ad85bdbd69f8d4674996eec801b`](https://explorer.testnet.xrplevm.org/tx/0xf7cf03425db8c1e09e7c5442956c99590e117ad85bdbd69f8d4674996eec801b) |
+| **Settlement Recorded tx (`settlement_tx`)** | [`0x5d88b85cc104f87029839cfcee9f71e1a9776931f8a472c7b58ef3b7148e89cb`](https://explorer.testnet.xrplevm.org/tx/0x5d88b85cc104f87029839cfcee9f71e1a9776931f8a472c7b58ef3b7148e89cb) |
+| **Merchant Payout RLUSD Delta** | +0.25 RLUSD: the payout wallet's RLUSD balance read on-chain is 0.25 after the run (it held none before) |
+| **Verified Receipt (`ap4m.claim-receipt.v1`)** | `verified: true`, amount 0.25, checked against chain 1449000 (ledger, vault, token) via `node ap4m/verify.mjs <claim_id>`; receipt: https://hackathon.ap4m.build/public/evidence/claims/0x35c57918aa1f1c07da331a2f1069f1c96e7e43e55ece1cbc95114cf459097b73/0xbee545e7a3865dd3d36e1b39ba10446534cc5f2414cbf657b8f3659e2a2cc6e2.json |

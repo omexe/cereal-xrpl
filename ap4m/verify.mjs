@@ -46,7 +46,7 @@ async function resolveArgs() {
     const resp = await fetch(`${apiUrl}/public/evidence/claims/${first.toLowerCase()}`);
     if (resp.ok) {
       const data = await resp.json();
-      const url = data?.receipts?.[0]?.receipt_url || data?.receipt_url || (Array.isArray(data) ? data[0] : null);
+      const url = data?.receipt_urls?.[0] || data?.receipts?.[0]?.receipt_url || data?.receipt_url || (Array.isArray(data) ? data[0] : null);
       if (typeof url === 'string') {
         const fullUrl = url.startsWith('http') ? url : `${apiUrl}${url}`;
         return { apiUrl, verifyArgs: [fullUrl] };
