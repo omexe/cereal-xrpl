@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import fcntl
 import os
-import tempfile
 import threading
 from pathlib import Path
 
-LOCK_DIR = Path(os.getenv("CEREAL_LOCK_DIR") or tempfile.gettempdir())
+LOCK_DIR = Path(os.getenv("CEREAL_LOCK_DIR") or "/tmp")  # one fixed place: TMPDIR differs between sessions
 
 
 class ProcessLock:

@@ -7,7 +7,6 @@ import fcntl
 import os
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -16,7 +15,7 @@ if args[:1] == ["--"]:
     args = args[1:]
 if not args:
     sys.exit("usage: with_testnet_lock.py -- <command> [args...]")
-path = Path(os.getenv("CEREAL_LOCK_DIR") or tempfile.gettempdir()) / "cereal-testnet-e2e.lock"
+path = Path(os.getenv("CEREAL_LOCK_DIR") or "/tmp") / "cereal-testnet-e2e.lock"  # fixed: TMPDIR differs between sessions
 fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
 start = time.time()
 try:
