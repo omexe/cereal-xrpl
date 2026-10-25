@@ -50,6 +50,9 @@ export default function App() {
   const selected = workspace.wallets.find(w => w.id === selectedId);
   const total = activeWallets.reduce((sum, wallet) => sum + wallet.balance, 0);
   const isHome = activeView === 'home';
+  // The composer describes a new wallet on Home and on a site's view (a site has no rules to edit); there, and only in
+  // live mode, a web address opens Add a site instead.
+  const composeNew = isHome || activeView === 'site';
   // Live home lists running wallets first; finished ones (reclaimed, retired, ...) stay one click away.
   const homeWallets = isLive ? runningWallets : activeWallets;
   const homeShown = Math.min(4, homeWallets.length);
@@ -150,8 +153,9 @@ export default function App() {
   }
   async function applyPrompt(event: FormEvent) {
     event.preventDefault();
-    if (isHome) {
+    if (composeNew) {
       if (!prompt.trim()) return;
+      if (isLive && /^https?:\/\//i.test(prompt.trim())) { openAddSite(prompt.trim()); setPrompt(''); return; }
       setWalletDescription(prompt.trim()); setModal('wallet');
       return;
     }
@@ -183,7 +187,7 @@ export default function App() {
   const app: AppActions = {
     workspace, activeWallets, selected, selectedId, setSelectedId, isHome, live, setWorkspace, updateWallet, showWallet,
     moveWallet, toggleArchive, notify, close: () => { setModal(null); setWalletDescription(''); setRulesSentence(''); setSiteUrl(undefined); },
-    session, setSession, selectedSiteId, openSite, openAddSite,
+    session, setSession, selectedSiteId: activeView === 'site' ? selectedSiteId : undefined, openSite, openAddSite,
   };
   const liveBanner = isLive && (live.status === 'error'
     ? <p className="live-banner error" role="alert">{live.error ?? 'The cereal service is not reachable.'} Retrying every 5 seconds.</p>
@@ -249,10 +253,10 @@ export default function App() {
       <footer className="composer">
       <p id="status-message" role={promptError || messageError || storageError ? 'alert' : 'status'} className={`status-message ${promptError || messageError || storageError ? 'error' : ''}`}>{storageError || message}</p>
       <form className="prompt-form" onSubmit={applyPrompt}>
-        <input aria-label={isHome ? 'Describe a new wallet in plain English' : 'Edit wallet spending rules'} aria-invalid={promptError} aria-describedby={promptError ? 'status-message' : undefined}
-          placeholder={isHome ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected && !editable ? 'This wallet is finished; its rules no longer change' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!isHome && !editable}
+        <input aria-label={composeNew ? 'Describe a new wallet in plain English' : 'Edit wallet spending rules'} aria-invalid={promptError} aria-describedby={promptError ? 'status-message' : undefined}
+          placeholder={composeNew ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected && !editable ? 'This wallet is finished; its rules no longer change' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!composeNew && !editable}
           onChange={event => { setPrompt(event.target.value); setPromptError(false); }} />
-        <button className="send-button" aria-label={isHome ? 'Create wallet from description' : 'Apply wallet constraints'} disabled={!prompt.trim() || (!isHome && !editable)}><ArrowUp /></button>
+        <button className="send-button" aria-label={composeNew ? 'Create wallet from description' : 'Apply wallet constraints'} disabled={!prompt.trim() || (!composeNew && !editable)}><ArrowUp /></button>
       </form>
       </footer>
     </main>
