@@ -1,4 +1,5 @@
-import type { CSSProperties, ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
+import { ChevronRight } from '@untitledui/icons';
 import {
   activityItems, activitySummary, durationLabel, isExpired, lifecycleProofs, nameLookup, planSkipped, segmentWidth,
   settledByMerchant, shortHash, spending, statusLabel, uniquePayments, type PaymentItem, type RefusalItem,
@@ -7,6 +8,8 @@ import type { Vendor } from '../api';
 import { explorerAccount, formatAmount, shortAddress } from '../format';
 import { ACTIVE_STATUSES } from '../live';
 import type { Wallet } from '../wallets';
+import { VIEW } from '../lib/walletSpheres';
+import { WalletOrganism } from './WalletOrganism';
 
 const money = (amount: number | string | null | undefined) => formatAmount(amount);
 const time = new Intl.DateTimeFormat('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'America/New_York' });
@@ -21,14 +24,18 @@ interface Props {
   actions?: ReactNode;
   /** Live only: the vendor directory (GET /vendors), to name payees that are not on this wallet's list. */
   vendors?: Vendor[];
+  /** The graphic: every active wallet as a sphere around the total, as an alternative to the sidebar. */
+  map: MapProps;
 }
+
+interface MapProps { wallets: Wallet[]; totalBalance: number; onSelect: (id: string) => void; onHome: () => void }
 
 export function WalletDetail(props: Props) {
   return props.wallet.live ? <LiveWalletDetail {...props} /> : <MockWalletDetail {...props} />;
 }
 
 /** The original browser-only demo (VITE_CEREAL_MODE=mock), unchanged. */
-function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, actions }: Props) {
+function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, actions, map }: Props) {
   const transactions = [...(wallet.transactions ?? [])].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   const merchants = [...new Set(transactions.map(transaction => transaction.merchant))];
   const groups = merchants.map((merchant, index) => ({
@@ -53,36 +60,51 @@ function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, ac
         {spent > wallet.constraints.spend && <span className="budget-over-limit">Over spending limit</span>}
       </div>
     </section>
-    <section className="wallet-policy" aria-labelledby="constraint-heading">
-      <h2 id="constraint-heading">{wallet.archived ? 'Archived wallet · Spending rules' : 'Spending rules'}</h2>
-      {wallet.description && <p className="wallet-description">{wallet.description}</p>}
+    <section className="wallet-policy" aria-label="Spending rules">
+      {wallet.archived && <h2>Archived wallet</h2>}
       <p className="constraints">
         Spend up to <button disabled={wallet.archived} onClick={onEditConstraints}>{`$${wallet.constraints.spend}`}</button> over <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.days} {wallet.constraints.days === 1 ? 'day' : 'days'}</button>, only at{' '}
         {wallet.constraints.merchants.map((merchant, index, list) => <span key={`${merchant}-${index}`}>
           <button disabled={wallet.archived} onClick={onEditConstraints}>{merchant}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : '. '}
         </span>)}
-        Ask me <button disabled={wallet.archived} onClick={onEditConstraints}>above {`$${wallet.constraints.approval}`}</button>. <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
+        {/* An approval threshold at or above the limit can never trigger, so it is not a rule worth stating. */}
+        {wallet.constraints.approval < wallet.constraints.spend && <>Ask me <button disabled={wallet.archived} onClick={onEditConstraints}>above {`$${wallet.constraints.approval}`}</button>. </>}<button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
       </p>
       {wallet.archived && <button className="text-button restore" onClick={onRestore}>Restore wallet</button>}
       {actions}
     </section>
-    <div className="wallet-activity">
-      <div className="activity-illustration"><img src="/assets/wallet-activity-organism.svg" width="356" height="406" alt="" /></div>
-      <section className="transactions" aria-labelledby="transactions-heading">
-        <header><span>Demo activity</span><h2 id="transactions-heading">Transactions</h2></header>
-        <div className="transaction-list" tabIndex={transactions.length ? 0 : undefined} role="region" aria-label="Demo transactions">
-          {transactions.map(transaction => <article className="transaction-card" key={transaction.id}>
-            <div className="transaction-main"><h3>{transaction.title}</h3>
-              <span className="transaction-merchant" style={{ '--merchant-color': groups.find(group => group.merchant === transaction.merchant)?.color } as CSSProperties}><i />{transaction.merchant}</span>
-              <span className="transaction-amount">{money(transaction.amount)}</span>
-            </div>
-            <div className="transaction-meta"><span>{transaction.durationSeconds}s</span><time dateTime={transaction.timestamp} title={`${date.format(new Date(transaction.timestamp))}, ${time.format(new Date(transaction.timestamp))} ET`}>{date.format(new Date(transaction.timestamp))} · {time.format(new Date(transaction.timestamp))} ET</time></div>
-          </article>)}
-          {!transactions.length && <p className="transaction-empty">No transactions for this wallet yet.</p>}
-        </div>
-      </section>
-    </div>
+    <Activity walletId={wallet.id} map={map} summary="Demo activity">
+      <div className="transaction-list" tabIndex={transactions.length ? 0 : undefined} role="region" aria-label="Demo transactions">
+        {transactions.map(transaction => <article className="transaction-card" key={transaction.id}>
+          <div className="transaction-main"><h3>{transaction.title}</h3>
+            <span className="transaction-merchant" style={{ '--merchant-color': groups.find(group => group.merchant === transaction.merchant)?.color } as CSSProperties}><i />{transaction.merchant}</span>
+            <span className="transaction-amount">{money(transaction.amount)}</span>
+          </div>
+          <div className="transaction-meta"><span>{transaction.durationSeconds}s</span><time dateTime={transaction.timestamp} title={`${date.format(new Date(transaction.timestamp))}, ${time.format(new Date(transaction.timestamp))} ET`}>{date.format(new Date(transaction.timestamp))} · {time.format(new Date(transaction.timestamp))} ET</time></div>
+        </article>)}
+        {!transactions.length && <p className="transaction-empty">No transactions for this wallet yet.</p>}
+      </div>
+    </Activity>
   </article>;
+}
+
+/** Transactions sit left of the illustration, collapsed to their header; opening the list pushes the illustration right.
+ * It stays mounted across wallets so the graphic can animate between them; the list closes for each new wallet. */
+function Activity({ walletId, map, summary, children }: { walletId: string; map: MapProps; summary: string; children: ReactNode }) {
+  const [openFor, setOpenFor] = useState<string>();
+  const open = openFor === walletId;
+  const setOpen = (next: boolean) => setOpenFor(next ? walletId : undefined);
+  return <div className="wallet-activity" data-open={open}>
+    <section className="transactions" aria-labelledby="transactions-heading">
+      <header>
+        <h2 id="transactions-heading"><button aria-expanded={open} aria-controls="transactions-body" onClick={() => setOpen(!open)}>
+          Transactions<ChevronRight aria-hidden /></button></h2>
+        <span className="activity-summary">{summary}</span>
+      </header>
+      <div id="transactions-body" className="transactions-body"><div>{children}</div></div>
+    </section>
+    <div className="activity-illustration organism-frame"><WalletOrganism {...map} selectedId={walletId} framed={VIEW} /></div>
+  </div>;
 }
 
 /** "Oct 24 · 7:20 PM ET"; nothing when the record has no usable time. */
@@ -140,7 +162,7 @@ function RefusalCard({ item }: { item: RefusalItem }) {
 
 /** I04/V04: the live wallet, straight from GET /subagents/{id}. Spending is validated payments only; pending and
  * failed payments and refused attempts are shown as what they are, each with its ledger evidence. */
-function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRestore, actions }: Props) {
+function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRestore, actions, map }: Props) {
   const live = wallet.live!;
   const rec = live.record;
   const nameOf = nameLookup(vendors);
@@ -190,9 +212,8 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
           <Explorer href={explorerAccount(live.address)!} title={`${live.address} on the testnet explorer`}>{shortAddress(live.address)}</Explorer></dd></div>}
       </dl>
     </section>
-    <section className="wallet-policy" aria-labelledby="constraint-heading">
-      <h2 id="constraint-heading">{wallet.archived ? 'Archived wallet · Spending rules' : 'Spending rules'}</h2>
-      {wallet.description && <p className="wallet-description">{wallet.description}</p>}
+    <section className="wallet-policy" aria-label="Spending rules">
+      {wallet.archived && <h2>Archived wallet</h2>}
       <p className="constraints">
         Spend up to <button {...rule}>{money(live.budget)}</button> over <button {...rule}>{duration}</button>,{' '}
         {payees.length ? <>only at{' '}{payees.map((payee, index, list) => <span key={`${payee}-${index}`}>
@@ -214,21 +235,17 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
       {wallet.archived && <button className="text-button restore" onClick={onRestore}>Restore wallet</button>}
       {actions}
     </section>
-    <div className="wallet-activity">
-      <div className="activity-illustration"><img src="/assets/wallet-activity-organism.svg" width="356" height="406" alt="" /></div>
-      <section className="transactions" aria-labelledby="transactions-heading">
-        <header><span className="activity-summary">{summary || 'No activity yet'}</span><h2 id="transactions-heading">Transactions</h2></header>
-        <div className="transaction-list" tabIndex={items.length ? 0 : undefined} role="region" aria-label="Wallet activity">
-          {items.map(item => item.kind === 'payment'
-            ? <PaymentCard key={item.key} item={item} color={item.state === 'settled' ? colorOf.get(item.address) : undefined} />
-            : <RefusalCard key={item.key} item={item} />)}
-          {!items.length && <p className="transaction-empty">No payments or refused attempts for this wallet yet.</p>}
-        </div>
-        {proofs.length > 0 && <section className="wallet-proof" aria-labelledby="proof-heading">
-          <h3 id="proof-heading">On-ledger proof</h3>
-          <ul>{proofs.map(p => <li key={p.key}><Explorer href={p.link} title={`${p.hash} on the explorer`}>{p.label} · {shortHash(p.hash)}</Explorer></li>)}</ul>
-        </section>}
-      </section>
-    </div>
+    <Activity walletId={wallet.id} map={map} summary={summary || 'No activity yet'}>
+      <div className="transaction-list" tabIndex={items.length ? 0 : undefined} role="region" aria-label="Wallet activity">
+        {items.map(item => item.kind === 'payment'
+          ? <PaymentCard key={item.key} item={item} color={item.state === 'settled' ? colorOf.get(item.address) : undefined} />
+          : <RefusalCard key={item.key} item={item} />)}
+        {!items.length && <p className="transaction-empty">No payments or refused attempts for this wallet yet.</p>}
+      </div>
+      {proofs.length > 0 && <section className="wallet-proof" aria-labelledby="proof-heading">
+        <h3 id="proof-heading">On-ledger proof</h3>
+        <ul>{proofs.map(p => <li key={p.key}><Explorer href={p.link} title={`${p.hash} on the explorer`}>{p.label} · {shortHash(p.hash)}</Explorer></li>)}</ul>
+      </section>}
+    </Activity>
   </article>;
 }

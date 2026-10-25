@@ -25,6 +25,12 @@
   --icon-prominent: 20px;
   --icon-stroke: 1.75;
 
+  /* Navigation fades: the old page fades out, then the new one fades in after a short overlap. Dialogs and the mobile
+     drawer use the fade-in. Reduced motion turns them off. */
+  --motion-fade-out: .2s ease-out;
+  --motion-fade-in: .3s ease-in-out;
+  --motion-fade-delay: .14s;
+
   --color-text-primary: #20232b;
   --color-text-secondary: #525866;
   --color-text-muted: #6b7280;
@@ -33,6 +39,16 @@
   --color-accent-soft: #d3d6f7;
   --color-organism-soft: #d3d1ff;
   --color-organism-selected: #332bff;
+
+  /* Forming: Home while a new wallet is being written. The workspace is the accent; text, the core and the forming
+     particles are on-accent white; other wallets are a lavender that reads on the accent. */
+  --color-forming-surface: var(--color-accent);
+  --color-forming-text: var(--color-text-on-accent);
+  --color-forming-text-muted: rgba(255, 255, 255, .78);
+  --color-forming-border: rgba(255, 255, 255, .42);
+  --color-forming-hover: rgba(255, 255, 255, .12);
+  --color-forming-sphere: #8b90ee;
+  --color-forming-particle: var(--color-text-on-accent);
   --color-surface: #ffffff;
   --color-surface-subtle: #f8f8fa;
   --color-surface-hover: #eeeef3;
