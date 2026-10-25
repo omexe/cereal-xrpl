@@ -1,4 +1,5 @@
-import { useEffect, useState, type DragEvent, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from 'react';
+import { flushSync } from 'react-dom';
 import { ArrowUp, ChevronDown, ChevronUp, Folder, Home03, Menu01, Plus, Settings01 } from '@untitledui/icons';
 import { api, describeError } from './api';
 import type { AppActions } from './appActions';
@@ -12,12 +13,16 @@ import { SitesSection } from './components/SitesSection';
 import { SettingsDialog } from './components/SettingsDialog';
 import { WalletActions } from './components/WalletActions';
 import { WalletDetail } from './components/WalletDetail';
+import { FormingWallet } from './components/FormingWallet';
+import { WalletOrganism } from './components/WalletOrganism';
+import { draftConstraints, draftMissing, parseDraft } from './lib/draftWallet';
+import { CORE_ID, HOME_VIEW } from './lib/walletSpheres';
 import { formatAmount } from './format';
 import { isActive } from './live';
 import { isLive } from './mode';
 import { loadSession, saveSession, type Session } from './session';
 import { useLiveData } from './store';
-import { parseConstraints, type Wallet } from './wallets';
+import { parseConstraints, populateMockWallet, type Wallet } from './wallets';
 import { useWorkspace } from './workspaceStore';
 
 type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | 'site' | null;
@@ -54,7 +59,11 @@ export default function App() {
   const homeWallets = isLive ? runningWallets : activeWallets;
   const homeShown = Math.min(4, homeWallets.length);
   const visibleWallets = isHome ? (showAllWallets ? activeWallets : homeWallets.slice(0, 4)) : activeWallets.filter(wallet => !wallet.folderId);
-  const activeNavigation = modal === 'wallet' ? 'new-wallet' : modal === 'settings' ? 'settings' : activeView;
+  const activeNavigation = modal === 'settings' ? 'settings' : activeView;
+  // Typing on Home writes a new wallet: the workspace turns blue and the wallet forms (FormingWallet). The input always
+  // updates at once; only the switch into and out of the forming view waits for its transition, so no keystroke is lost.
+  const [formingShown, setFormingShown] = useState(false);
+  const forming = isHome && formingShown;
   const editable = !!selected && !selected.archived && isActive(selected);
 
   useEffect(() => {
@@ -64,24 +73,55 @@ export default function App() {
   }, [message, promptError, messageError]);
 
   function notify(text: string, error = false) { setMessage(text); setMessageError(error); }
-  function selectWallet(id: string) {
+  /** Page changes fade the old page out, then the new one in (view transitions; see Motion in styles.css). */
+  function navigate(update: () => void) {
+    if (!document.startViewTransition || matchMedia('(prefers-reduced-motion: reduce)').matches) { update(); return; }
+    document.startViewTransition(() => flushSync(update));
+  }
+  function selectWallet(id: string) { navigate(() => {
     setSelectedId(id); setActiveView('wallet'); setMobileNav(false);
     setPrompt(''); setPromptError(false); notify('');
     const folderId = workspace.wallets.find(wallet => wallet.id === id)?.folderId;
     if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
-  }
-  function showWallet(id: string, folderId?: string) {
+  }); }
+  function showWallet(id: string, folderId?: string) { navigate(() => {
     if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
     setSelectedId(id); setActiveView('wallet'); setMobileNav(false); setPrompt(''); setPromptError(false); setWalletDescription('');
-  }
+  }); }
   function setSession(next: Session | null) { saveSession(next); setSessionState(next); }
-  function openSite(siteId: string) {
+  function openSite(siteId: string) { navigate(() => {
     setSelectedSiteId(siteId); setActiveView('site'); setMobileNav(false); setPrompt(''); setPromptError(false); notify('');
-  }
+  }); }
   function openAddSite(url?: string) { setSiteUrl(url); setModal('site'); }
-  function goHome() {
+  function goHome() { navigate(() => {
     setSelectedId(activeWallets[0]?.id); setActiveView('home'); setMobileNav(false);
     setPrompt(''); setPromptError(false); notify('');
+  }); }
+  const formingTarget = useRef(false);
+  useEffect(() => {
+    const wanted = isHome && !!prompt.trim();
+    // One transition per switch: keystrokes while it is pending must not restart it.
+    if (wanted === formingTarget.current) return;
+    formingTarget.current = wanted;
+    if (isHome) navigate(() => setFormingShown(wanted)); else setFormingShown(false);
+  }, [isHome, prompt]);
+  function editPrompt(next: string) { setPrompt(next); setPromptError(false); }
+  /** Mock: the demo wallet is exactly the draft on screen, funded with its budget. Live: cereal reads the sentence and
+   * the owner approves on the Ledger, in the New wallet dialog. */
+  async function createFromPrompt() {
+    if (isLive) { setWalletDescription(prompt.trim()); setModal('wallet'); return; }
+    const draft = parseDraft(prompt), constraints = draftConstraints(draft);
+    if (!constraints) {
+      setPromptError(true); notify(`Still needed: ${draftMissing(draft).join(', ')}. For example: a budget of $20 over 2 days, only at Apollo.`, true);
+      return;
+    }
+    const id = crypto.randomUUID();
+    // Same contract as the New wallet dialog: open the wallet only once the workspace store has saved it.
+    const saved = await setWorkspace(previous => ({ ...previous, wallets: [...previous.wallets, populateMockWallet({
+      id, name: draft.name ?? 'New wallet', description: prompt.trim(), transactions: [], balance: constraints.spend, archived: false, constraints,
+    })] }));
+    if (!saved) return;
+    showWallet(id); notify('Demo wallet created with mock funds and activity.');
   }
   function updateWallet(id: string, update: Partial<Wallet>) {
     return setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === id ? { ...w, ...update } : w) }));
@@ -151,8 +191,7 @@ export default function App() {
   async function applyPrompt(event: FormEvent) {
     event.preventDefault();
     if (isHome) {
-      if (!prompt.trim()) return;
-      setWalletDescription(prompt.trim()); setModal('wallet');
+      if (prompt.trim()) void createFromPrompt();
       return;
     }
     if (!selected || !editable) return;
@@ -189,7 +228,7 @@ export default function App() {
     ? <p className="live-banner error" role="alert">{live.error ?? 'The cereal service is not reachable.'} Retrying every 5 seconds.</p>
     : live.status === 'loading' ? <p className="live-banner" role="status">Connecting to the cereal service…</p> : null);
 
-  return <div className={`app-shell ${isHome ? 'home-view' : 'wallet-view'}`}>
+  return <div className={`app-shell ${isHome ? 'home-view' : 'wallet-view'} ${forming ? 'is-forming' : ''}`}>
     <header className="mobile-header"><button className="icon-button" aria-label="Toggle navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(!mobileNav)}><Menu01 /></button><span>Cereal</span><span className="mobile-count">{activeWallets.length} wallets</span></header>
     {mobileNav && <button className="nav-scrim" aria-label="Close navigation" onClick={() => setMobileNav(false)} />}
     <aside className={`sidebar ${mobileNav ? 'is-open' : ''}`} aria-label="Wallet navigation">
@@ -197,7 +236,6 @@ export default function App() {
       <nav className="primary-nav" aria-label="Main">
         <button aria-current={activeNavigation === 'home' ? 'page' : undefined} onClick={goHome}><Home03 /><span>Home</span></button>
         <button aria-current={activeNavigation === 'settings' ? 'true' : undefined} onClick={() => setModal('settings')}><Settings01 /><span>Settings</span></button>
-        <button aria-current={activeNavigation === 'new-wallet' ? 'true' : undefined} onClick={() => { setWalletDescription(''); setModal('wallet'); }}><Plus /><span>New Wallet</span></button>
       </nav>
       {(workspace.demoPayments ?? []).some(payment => payment.status === 'pending') && <button className="approval-nav" onClick={() => { const payment = workspace.demoPayments?.find(item => item.status === 'pending'); if (payment) selectWallet(payment.walletId); }}>Approval needed <span>{workspace.demoPayments?.filter(item => item.status === 'pending').length}</span></button>}
       <section className="sidebar-section">
@@ -227,7 +265,10 @@ export default function App() {
       <div className="workspace-content">
       {liveBanner}
       {activeView === 'site' && selectedSiteId ? <SiteDetail app={app} siteId={selectedSiteId} />
-      : isHome ? <section className="home-stage" aria-label="Wallet home">
+      : forming ? <section className="home-stage" aria-label="Wallet home">
+        <FormingWallet text={prompt} wallets={activeWallets} totalBalance={total} caption={isLive ? 'New wallet, funded from your main wallet' : 'New demo wallet, funded with demo money'}
+          canCreate={!isLive || live.status === 'ready'} onCreate={createFromPrompt} onCancel={() => editPrompt('')} onSelect={selectWallet} />
+      </section> : isHome ? <section className="home-stage" aria-label="Wallet home">
         {isLive ? <div className="home-summary">
           <h1>{live.main ? formatAmount(live.main.rlusd) : '—'}</h1>
           <p>Main wallet on XRPL testnet · {runningWallets.length} active {runningWallets.length === 1 ? 'wallet' : 'wallets'}{live.main && Number(live.main.outstanding_budget) > 0 ? ` · ${formatAmount(live.main.outstanding_budget)} out in wallets` : ''}</p>
@@ -237,10 +278,11 @@ export default function App() {
           <p>Total demo balance · {activeWallets.length} active {activeWallets.length === 1 ? 'wallet' : 'wallets'}</p>
           <button className="primary-button" onClick={() => { if (activeWallets.length) setModal('funds'); else { setWalletDescription(''); setModal('wallet'); } }}>{activeWallets.length ? 'Add funds' : 'Create a wallet'}</button>
         </div>}
-        <div className="home-illustration"><img src="/assets/home-organism.svg" width="640" height="620" alt="" /></div>
+        <div className="home-illustration organism-frame">
+          <WalletOrganism wallets={activeWallets} totalBalance={total} selectedId={CORE_ID} onSelect={selectWallet} onHome={goHome} framed={HOME_VIEW} /></div>
       </section> : selected ? <WalletDetail wallet={selected} onAddFunds={openFunds} onEditConstraints={openConstraints} onRestore={toggleArchive}
           payments={(workspace.demoPayments ?? []).filter(payment => payment.walletId === selected.id)}
-          vendors={live.vendors}
+          vendors={live.vendors} map={{ wallets: activeWallets, totalBalance: total, onSelect: selectWallet, onHome: goHome }}
           actions={<WalletActions app={app} wallet={selected} />} />
         : <div className="empty-details"><h1>Create a wallet<br />for your next task.</h1><button className="primary-button" onClick={() => setModal('wallet')}>Create a wallet</button></div>}
 
@@ -251,7 +293,7 @@ export default function App() {
       <form className="prompt-form" onSubmit={applyPrompt}>
         <input aria-label={isHome ? 'Describe a new wallet in plain English' : 'Edit wallet spending rules'} aria-invalid={promptError} aria-describedby={promptError ? 'status-message' : undefined}
           placeholder={isHome ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected && !editable ? 'This wallet is finished; its rules no longer change' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!isHome && !editable}
-          onChange={event => { setPrompt(event.target.value); setPromptError(false); }} />
+          onChange={event => editPrompt(event.target.value)} onKeyDown={event => { if (event.key === 'Escape' && forming) editPrompt(''); }} />
         <button className="send-button" aria-label={isHome ? 'Create wallet from description' : 'Apply wallet constraints'} disabled={!prompt.trim() || (!isHome && !editable)}><ArrowUp /></button>
       </form>
       </footer>

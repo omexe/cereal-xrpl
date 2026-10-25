@@ -24,6 +24,133 @@ test('wallet activity matches its spending summary and persists across reloads',
   expect(errors).toEqual([]);
 });
 
+test('transactions start collapsed left of the illustration and open to push it right', async ({ page }) => {
+  await page.setViewportSize({ width: 1470, height: 802 });
+  await openFirstWallet(page);
+  const toggle = page.getByRole('button', { name: 'Transactions', exact: true });
+  const art = page.locator('.activity-illustration');
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(page.locator('.transaction-card').first()).toBeHidden();
+  const header = (await page.locator('.transactions > header').boundingBox())!;
+  const closed = (await art.boundingBox())!;
+  expect(header.x + header.width).toBeLessThanOrEqual(closed.x);
+  const content = (await page.locator('.wallet-activity').boundingBox())!;
+  expect(Math.abs(closed.x + closed.width / 2 - (content.x + content.width / 2))).toBeLessThanOrEqual(2);
+  await toggle.click();
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(page.locator('.transaction-card').first()).toBeVisible();
+  // The shift animates; wait for the illustration to settle before measuring.
+  await expect.poll(async () => (await art.boundingBox())!.x).toBeGreaterThan(closed.x + 100);
+  await expect(async () => {
+    const before = (await art.boundingBox())!.x;
+    await page.waitForTimeout(100);
+    expect((await art.boundingBox())!.x).toBe(before);
+  }).toPass();
+  const list = (await page.locator('.transaction-list').boundingBox())!;
+  expect(list.x + list.width).toBeLessThanOrEqual((await art.boundingBox())!.x);
+  await page.getByRole('button', { name: 'Open Prospect discovery', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Transactions', exact: true })).toHaveAttribute('aria-expanded', 'false');
+});
+
+test('the wallet graphic navigates: spheres open active wallets, the core goes home, and home navigates back', async ({ page }) => {
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await openFirstWallet(page);
+  const map = page.locator('.activity-illustration');
+  const sphere = (name: string) => map.getByRole('button', { name: new RegExp(`^${name}, wallet`) });
+  await expect(map.locator('.wallet-cluster')).toHaveCount(await page.locator('.sidebar .wallet-row:not(.archived)').count());
+  await expect(sphere('Lead enrichment')).toHaveAttribute('aria-pressed', 'true');
+  await sphere('Prospect discovery').click();
+  await expect(sphere('Prospect discovery')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.budget-label h1')).toHaveText('Prospect discovery');
+  await expect(page.locator('.wallet-row[aria-current=true]')).toHaveText('Prospect discovery');
+  // Keyboard reaches the same controls; focusing a sphere never scrolls the cropped frame.
+  await sphere('CRM updates').focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('.budget-label h1')).toHaveText('CRM updates');
+  expect(await map.evaluate(node => node.scrollLeft + node.scrollTop)).toBe(0);
+  const core = map.getByRole('button', { name: /^Home\. Total wallet/ });
+  await core.click();
+  await expect(core).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.home-summary h1')).toBeVisible();
+  // Home has the same map, with the core selected: its spheres open wallets too.
+  const home = page.locator('.home-illustration');
+  await expect(home.getByRole('button', { name: /^Home\. Total wallet/ })).toHaveAttribute('aria-pressed', 'true');
+  await home.getByRole('button', { name: /^Market sizing, wallet/ }).click();
+  await expect(page.locator('.budget-label h1')).toHaveText('Market sizing');
+  expect(errors).toEqual([]);
+});
+
+test('navigation fades the page out and in, keeps the sphere map steady, and skips the fade under reduced motion', async ({ page }) => {
+  // Count view transitions and record which layers fade.
+  await page.addInitScript(() => {
+    const start = document.startViewTransition?.bind(document);
+    (window as unknown as { transitions: number }).transitions = 0;
+    if (start) document.startViewTransition = (update => { (window as unknown as { transitions: number }).transitions++; return start(update); }) as typeof document.startViewTransition;
+  });
+  await page.goto('/');
+  const transitions = () => page.evaluate(() => (window as unknown as { transitions: number }).transitions);
+  const layer = (name: string) => page.locator(name).evaluate(node => getComputedStyle(node).viewTransitionName);
+  await page.locator('[data-wallet-group] .wallet-row').first().click();
+  await expect(page.locator('.budget-label h1')).toHaveText('Lead enrichment');
+  expect(await transitions()).toBe(1);
+  expect(await layer('.workspace-content')).toBe('page');
+  expect(await layer('.activity-illustration')).toBe('sphere-map');
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await expect(page.locator('.home-summary h1')).toBeVisible();
+  expect(await transitions()).toBe(2);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.locator('[data-wallet-group] .wallet-row').first().click();
+  await expect(page.locator('.budget-label h1')).toHaveText('Lead enrichment');
+  expect(await transitions()).toBe(2);
+});
+
+test('typing on Home forms the new wallet: blue workspace, amount and rules as typed, cancel or create', async ({ page }) => {
+  await page.goto('/');
+  const box = page.getByRole('textbox', { name: 'Describe a new wallet in plain English' });
+  const shell = page.locator('.app-shell');
+  const create = page.getByRole('button', { name: 'Create wallet', exact: true });
+  await expect(page.getByRole('button', { name: 'New Wallet', exact: true })).toHaveCount(0);
+  await box.pressSequentially('Create a wallet called Breakfast');
+  await expect(shell).toHaveClass(/is-forming/);
+  await expect(page.locator('.forming-amount')).toHaveText('$0.00');
+  await expect(page.locator('.forming-caption')).toHaveText('Breakfast · New demo wallet, funded with demo money');
+  await expect(create).toBeDisabled();
+  await box.pressSequentially(' Customer Discovery with a budget of $20');
+  await expect(page.locator('.forming-amount')).toHaveText('$20.00');
+  // Only what is typed: no default duration, vendors or sweep.
+  await expect(page.locator('.forming-rules')).toHaveText('Spend up to $20.');
+  await expect(page.locator('.forming-missing')).toHaveText('Still needed: a time limit and vendors');
+  await box.pressSequentially(' over 2 days');
+  await expect(page.locator('.forming-rules')).toHaveText('Spend up to $20 over 2 days.');
+  await expect(create).toBeDisabled();
+  await box.pressSequentially(', only at Notion and Apollo. Ask me above $5. Keep funds when done.');
+  await expect(page.locator('.forming-rules')).toHaveText('Spend up to $20 over 2 days, only at Notion and Apollo. Ask me above $5. Keep funds when done.');
+  await expect(page.locator('.forming-missing')).toHaveCount(0);
+  await expect(create).toBeEnabled();
+  // Vendors may be typed in any case after "only at"; known ones keep their spelling, and "at most" is not a vendor.
+  await box.fill('create a wallet called breakfast that has a limit of $30 over the span of 5 days, only at apollo and hubspot.');
+  await expect(page.locator('.forming-rules')).toHaveText('Spend up to $30 over 5 days, only at Apollo and HubSpot.');
+  await expect(create).toBeEnabled();
+  await box.fill('called Lunch, spend at most $30 over 3 days');
+  await expect(page.locator('.forming-rules')).toHaveText('Spend up to $30 over 3 days.');
+  await expect(page.locator('.forming-missing')).toHaveText('Still needed: vendors');
+  // Escape and Cancel both return to Home with nothing created.
+  await box.press('Escape');
+  await expect(shell).not.toHaveClass(/is-forming/);
+  await expect(box).toHaveValue('');
+  await box.fill('called Scratch with $9');
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect(page.locator('.home-summary h1')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Open Scratch', exact: true })).toHaveCount(0);
+  // Create makes exactly the wallet on screen and opens it.
+  await box.fill('Create a wallet called Breakfast Customer Discovery with a budget of $20 over 2 days, only at Notion and Apollo. Ask me above $5.');
+  await create.click();
+  await expect(page.locator('.budget-label h1')).toHaveText('Breakfast Customer Discovery');
+  await expect(page.locator('.constraints')).toHaveText('Spend up to $20 over 2 days, only at Notion and Apollo. Ask me above $5. Sweep back when done.');
+  await expect(shell).not.toHaveClass(/is-forming/);
+});
+
 test('constraints reject unsupported instructions and update the spending limit', async ({ page }) => {
   await openFirstWallet(page);
   const prompt = page.getByRole('textbox', { name: 'Edit wallet spending rules' });
@@ -60,12 +187,10 @@ test('funding updates the available balance without fabricating spending', async
 test('home creates a wallet from a description, then archive and restore preserve it', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.budget')).toHaveCount(0);
-  await page.getByRole('textbox', { name: 'Describe a new wallet in plain English' }).fill('Research competitor pricing for our next launch');
+  await page.getByRole('textbox', { name: 'Describe a new wallet in plain English' }).fill('Create a wallet called Launch research with a budget of $40 over 3 days, only at HubSpot and Apollo. Sweep back when done.');
   await page.getByRole('button', { name: 'Create wallet from description' }).click();
-  await expect(page.getByLabel('Task description')).toHaveValue('Research competitor pricing for our next launch');
-  await page.getByLabel('Wallet name').fill('Launch research');
-  await page.getByRole('button', { name: 'Create wallet', exact: true }).click();
-  await expect(page.locator('.wallet-description')).toHaveText('Research competitor pricing for our next launch');
+  await expect(page.locator('.budget h1')).toHaveText('Launch research');
+  await expect(page.locator('.constraints')).toHaveText('Spend up to $40 over 3 days, only at HubSpot and Apollo. Sweep back when done.');
   await expect(page.locator('.transaction-card')).toHaveCount(6);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Archive selected wallet' }).click();
@@ -77,7 +202,7 @@ test('home creates a wallet from a description, then archive and restore preserv
   await page.reload();
   await page.getByRole('button', { name: '+ 3 more', exact: true }).click();
   await page.getByRole('button', { name: 'Open Launch research', exact: true }).click();
-  await expect(page.locator('.wallet-description')).toHaveText('Research competitor pricing for our next launch');
+  await expect(page.locator('.budget h1')).toHaveText('Launch research');
 });
 
 test('wallets move between folders and unfiled wallets with persistence', async ({ page }) => {
@@ -122,6 +247,7 @@ test('desktop and mobile keep the composer reachable and activity contained', as
   await page.setViewportSize({ width: 1470, height: 802 });
   await openFirstWallet(page);
   await expect(page.locator('.prompt-caret')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Transactions', exact: true }).click();
   for (const viewport of [{ width: 1470, height: 802 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
@@ -131,10 +257,12 @@ test('desktop and mobile keep the composer reachable and activity contained', as
     await expect(page.locator('.transaction-card').last()).toBeVisible();
   }
   await page.getByRole('button', { name: 'Toggle navigation' }).click();
-  await page.getByRole('button', { name: 'New Wallet', exact: true }).click();
-  await page.getByLabel('Wallet name').fill('Mobile wallet');
-  await page.getByRole('button', { name: 'Create wallet', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'New Wallet', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Toggle navigation' })).toHaveAttribute('aria-expanded', 'false');
+  await page.getByRole('textbox', { name: 'Describe a new wallet in plain English' }).fill('A wallet called Mobile wallet with $15 for 1 day, only at Apollo');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.getByRole('button', { name: 'Create wallet', exact: true }).click();
   await expect(page.locator('.budget-label h1')).toHaveText('Mobile wallet');
 });
 
