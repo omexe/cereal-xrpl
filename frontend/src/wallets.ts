@@ -1,3 +1,5 @@
+import testDeployment from './fixtures/deployment.json';
+import { isTestEnvironment } from './mode';
 import type { LiveInfo } from './live';
 import type { DemoPayment, ResearchRun } from './researchDemo';
 
@@ -45,7 +47,7 @@ export interface Wallet {
 
 export interface Folder { id: string; name: string }
 export interface Workspace { wallets: Wallet[]; folders: Folder[]; demoPayments?: DemoPayment[]; researchRuns?: ResearchRun[] }
-export const STORAGE_KEY = 'cereal-demo-v1';
+export const STORAGE_KEY = isTestEnvironment ? 'cereal-test-v1' : 'cereal-demo-v1';
 export const defaultConstraints: Constraints = {
   spend: 20, days: 2, merchants: ['HubSpot', 'Clearbit', 'Apollo'], approval: 5, sweep: true,
 };
@@ -101,6 +103,11 @@ export function populateMockWallet(wallet: Wallet, profileIndex?: number): Walle
 }
 
 export function initialWorkspace(): Workspace {
+  if (isTestEnvironment) {
+    const fixture: Workspace = structuredClone(testDeployment);
+    const createdAt = new Date().toISOString();
+    return { ...fixture, wallets: fixture.wallets.map(wallet => ({ ...wallet, createdAt })) };
+  }
   return {
     folders: Object.entries(folderNames).map(([id, name]) => ({ id, name })),
     wallets: Array.from({ length: 8 }, (_, i) => populateMockWallet({
@@ -149,14 +156,4 @@ export function loadWorkspace(): Workspace {
         }),
       } : initialWorkspace();
   } catch { return initialWorkspace(); }
-}
-
-export function parseConstraints(text: string): Constraints | null {
-  // Deliberately require a complete supported sentence: never silently apply a partial policy.
-  const match = text.trim().match(/^spend up to \$(\d+(?:\.\d{1,2})?) over (\d+) days?, only at ([\w .,&-]+)\. ask me above \$(\d+(?:\.\d{1,2})?)\. (sweep back|keep funds) when done\.?$/i);
-  if (!match) return null;
-  const merchants = match[3].split(/,|\band\b|&/i).map(x => x.trim()).filter(Boolean);
-  if (![+match[1], +match[2], +match[4]].every(Number.isFinite)
-    || +match[1] <= 0 || +match[2] <= 0 || +match[2] > 365 || !merchants.length) return null;
-  return { spend: +match[1], days: +match[2], merchants, approval: +match[4], sweep: match[5].toLowerCase() === 'sweep back' };
 }

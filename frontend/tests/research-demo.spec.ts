@@ -93,6 +93,7 @@ test('Cereal policy edits take effect in the waiting chat and cannot be bypassed
   const href = await createResearch(page); const chat = await context.newPage(); await chat.goto(href!);
   await startChat(chat); await waitForApproval(chat, page);
   await page.getByRole('button', { name: '$20', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit the fields instead' }).click();
   await page.getByLabel('Spend limit ($)', { exact: true }).fill('4');
   await page.getByRole('button', { name: 'Save constraints', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Approve $7.50', exact: true })).toHaveCount(0);

@@ -90,6 +90,24 @@ def budget_for(price: Decimal) -> Decimal:
 def needs_from_goal(goal: str, items: list[str]) -> list[str]:
     """Which catalog items the goal asks for. Claude picks when a key is set; otherwise words in the goal are matched
     to item names (with a few synonyms). Only names that exist in a catalog can come back."""
+    if goal.startswith("Get catalog resources: "):
+        requested = goal.removeprefix("Get catalog resources: ").split("; vendors:", 1)[0].split(", ")
+        return list(dict.fromkeys(i for i in requested if i in items))
+    # The research demo has explicit catalog resources. Resolve its common phrases without a model round trip.
+    # Ignore the wallet-selection suffix: a wallet named "market sizing" is not itself a purchase instruction.
+    topic = re.split(r"\buse\s+(?:(?:my|our|the)\s+)?", goal, maxsplit=1, flags=re.I)[0].lower()
+    explicit = []
+    if re.search(r"\bmarket[ -](?:data|research|sizing|size)\b", topic) and "market-data" in items:
+        explicit.append("market-data")
+    if re.search(r"\bxrpl\b", topic) and re.search(r"\b(?:research|docs|documentation|founders?|funding|products?)\b", topic) and "xrpl-research" in items:
+        explicit.append("xrpl-research")
+    if explicit:
+        # Preserve an explicit request for existing catalog items in the same sentence.
+        for word in re.findall(r"[a-z]+", topic):
+            item = SYNONYMS.get(word, word)
+            if item in items and item not in explicit:
+                explicit.append(item)
+        return explicit
     from . import llm
     if llm.available():
         picked = llm.choose_items(goal, items)
@@ -111,11 +129,16 @@ def plan(goal: str, envelope: Decimal, bases: list[str] | None = None, allowed: 
     cats = [x for x in (catalog(b) for b in (bases or config.VENDOR_URLS)) if x]
     items = sorted({it["item"] for cat in cats for it in cat.get("items", [])})
     needs = needs_from_goal(goal, items)
+    topic = re.split(r"\buse\s+(?:(?:my|our|the)\s+)?", goal, maxsplit=1, flags=re.I)[0]
+    named = {cat.get("pay_to") for cat in cats if cat.get("vendor") and
+             re.search(r"(?<!\w)" + re.escape(cat["vendor"]) + r"(?!\w)", topic, re.I)}
     lines, total = [], Decimal(0)
     for item in needs:
         found = offers(item, [cat["base"] for cat in cats], c)
         off_list = [o for o in found if allowed and o["payee"] not in allowed]
-        ch = choose(item, [o for o in found if not allowed or o["payee"] in allowed])
+        not_requested = [o for o in found if named and o["payee"] not in named and (not allowed or o["payee"] in allowed)]
+        ch = choose(item, [o for o in found if (not allowed or o["payee"] in allowed) and (not named or o["payee"] in named)])
+        ch["rejected"] += [{**o, "reason": "not_requested"} for o in not_requested]
         ch["rejected"] += [{**o, "reason": "not_on_your_list"} for o in off_list]
         if ch["chosen"]:
             price = Decimal(ch["chosen"]["quote"]["price"])

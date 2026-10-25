@@ -9,7 +9,8 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test": "playwright test",
-    "test:live": "playwright test -c playwright.live.config.ts"
+    "test:live": "playwright test -c playwright.live.config.ts",
+    "test:sandbox": "playwright test -c playwright.sandbox.config.ts"
   },
   "dependencies": {
     "@untitledui/icons": "^0.0.23",

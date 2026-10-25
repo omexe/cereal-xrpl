@@ -3,7 +3,7 @@ import { defineConfig } from '@playwright/test';
 // Live specs against a real cereal service on XRPL testnet. They spend testnet RLUSD: run them under the machine-wide
 // lock so parallel runs take turns on the shared treasury and Speculos device:
 //   ../.venv/bin/python ../scripts/with_testnet_lock.py -- npx playwright test -c playwright.live.config.ts tests/live-x.spec.ts
-// By default this starts a private service (sweeper off, deterministic parser, its own record file) on
+// By default this starts a private service (sweeper off, AI interpretation, its own record file) on
 // CEREAL_E2E_PORT and the app on CEREAL_E2E_UI_PORT. Set CEREAL_API to test an already-running service instead.
 const servicePort = Number(process.env.CEREAL_E2E_PORT ?? 8101);
 const uiPort = Number(process.env.CEREAL_E2E_UI_PORT ?? 5181);
@@ -20,7 +20,7 @@ export default defineConfig({
   webServer: [
     ...(external ? [] : [{
       command: `.venv/bin/uvicorn cereal.service:app --host 127.0.0.1 --port ${servicePort}`, cwd: '..', url: `${api}/health`,
-      env: { CEREAL_SWEEPER: '0', CEREAL_LLM: process.env.CEREAL_LLM ?? 'off', CEREAL_SERVICE_URL: api,
+      env: { CEREAL_SWEEPER: '0', CEREAL_LLM: process.env.CEREAL_LLM ?? 'auto', CEREAL_SERVICE_URL: api,
         CEREAL_DEPLOYMENTS_FILE: process.env.CEREAL_DEPLOYMENTS_FILE ?? 'deployments.e2e.json' },
       reuseExistingServer: false, timeout: 120_000, stdout: 'pipe' as const, stderr: 'pipe' as const,
     }]),

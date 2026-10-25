@@ -8,7 +8,7 @@ React + TypeScript + Vite implementation of Figma home screen `21:1489` and wall
 cd frontend
 npm ci
 npm run dev        # live: http://127.0.0.1:5180, data from the cereal service (CEREAL_API, default :8001)
-npm run dev:mock   # mock: browser-only demo data, no backend
+npm run dev:mock   # mock: local wallet data; AI rule edits use the service
 ```
 
 Live mode is the default. Start the service first (`make service` in the repo root); Vite proxies `/api` to it, so the
@@ -26,11 +26,13 @@ npm run test:live   # live specs (tests/live-*.spec.ts) against XRPL testnet; se
 
 ## Research chat tool
 
-Start with `npm run dev:mock`, then open **Settings → Developer tools → Open demo chat** to launch the separate ChatGPT-style tool at `/demo-chat`. Name an existing wallet in the prompt, for example: “Research XRPL. Use my Apollo Research wallet for payments.” No special wallet or creation flow is required.
+In the default live app, open **Settings → Developer tools → Open test chat**. `/test-chat` reads active wallets from the backend and submits tasks to Cereal’s existing runner. Name an existing wallet in the prompt, for example “Get the agenda. Use my market sizing wallet.” Names are resolved against a fresh backend list; missing or ambiguous names require selection. Budget, vendor, expiry, approval, and completion rules stay in Cereal. Run state, payment evidence, and balances come from the backend; uncertain request retries reuse the same ID.
 
-Cereal applies that wallet’s current rules. Requests, approvals, blocked attempts, and payments appear in its normal transaction list alongside its existing history. Chat asks which wallet to use if the name is missing, unknown, or ambiguous. Launch and replay controls stay in Settings; reset reverses only this tool’s simulated activity and preserves prior history, funding, rules, and other wallets.
+The assistant UI is simulated, but submitting can spend **testnet RLUSD**. General browsing is not connected; tasks use the connected vendor catalog. Market-data and XRPL research reports are labeled fictional sample data. Refusals appear in the conversation after the sent message; unsupported requests never get a fabricated success.
 
-Both windows must use the same browser profile and origin. No live browsing, model calls, provider calls, or real payments occur. See [the walkthrough](../docs/RESEARCH-CHAT-DEMO.md) for presentation steps, source prices, persistence behavior, and the integration boundary.
+**Settings → Developer tools → Offline fixtures** opens `/test-wallets` and `/fixture-chat`. Four wallets from `src/fixtures/deployment.json` initialize this isolated, entirely simulated workspace under `cereal-test-v1`. It does not call payment APIs or modify backend records. `npm run dev:mock` also retains the original simulation at `/demo-chat`; in live mode that route opens the connected chat instead.
+
+Run `npm run test:sandbox` to verify live chat against intercepted backend responses and offline fixture isolation without spending funds. See [the walkthrough](../docs/RESEARCH-CHAT-DEMO.md) for both flows.
 
 ## Mock-mode behavior
 
@@ -41,11 +43,8 @@ Both windows must use the same browser profile and origin. No live browsing, mod
 - Add funds changes the selected wallet's available demo balance, shown in the funding dialog. It does not create spending transactions. Home funding lets you select the receiving wallet.
 - New Wallet creates a named demo wallet with an optional description and folder. Settings can archive, restore, or move the selected wallet. Dragging also moves wallets between folders and Disposable Wallets.
 - Archived wallets retain their activity and can be restored; funding and policy edits are disabled while archived.
-- Click a blue rule to edit it. The composer supports complete sentences in this explicit format (a deterministic parser, not an AI service):
-
-  `Spend up to $20 over 2 days, only at HubSpot, Clearbit and Apollo. Ask me above $5. Sweep back when done.`
-
-  `Keep funds when done.` is also supported. Unsupported instructions return feedback without changing the policy.
+- Click a blue rule or use the wallet composer to describe an edit. AI receives the current rules and interprets partial requests such as “Halve my approval threshold and keep the leftovers.” Review the proposal before saving. Untouched rules stay unchanged; ambiguous requests or model failures leave the policy unchanged. “Edit the fields instead” remains available.
+- AI editing in both live and mock mode requires the cereal service with `OPENROUTER_API_KEY` or `ANTHROPIC_API_KEY` configured server-side and `CEREAL_LLM` enabled. There is no parser fallback. Mock proposals use `/demo/rules/preview`; saving still only updates local browser data. Live previews return `resolved_change`, which Apply validates again without another model call. Live ledger, budget, vendor, and company controls still apply.
 - Public demo state persists in localStorage under `cereal-demo-v1`. Original placeholder labels are refreshed without resetting user edits.
 - Sidebar and main content scroll independently. The composer stays at the bottom of the viewport. The transaction list scrolls on desktop and expands in the mobile content flow.
 

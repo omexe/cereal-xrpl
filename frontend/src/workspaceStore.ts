@@ -19,7 +19,7 @@ const subscribe = (listener: () => void) => { listeners.add(listener); return ()
 export async function mutateWorkspace<T>(mutate: (state: Workspace) => T): Promise<T> {
   try {
     if (!navigator.locks) throw new Error('This demo needs a browser with Web Locks. Open it on localhost in a current Chrome, Edge, or Safari browser.');
-    return await navigator.locks.request('cereal-demo-workspace', () => {
+    return await navigator.locks.request(`${STORAGE_KEY}-workspace`, () => {
       const draft = structuredClone(loadWorkspace());
       const result = mutate(draft);
       reconcilePayments(draft);

@@ -110,6 +110,7 @@ class EventReport(BaseModel):
 
 class DoneRequest(BaseModel):
     summary: str
+    run_id: str | None = None
 
 
 def _refuse(reason: str, **evidence) -> dict:
@@ -402,7 +403,12 @@ def done(dep_id: str, req: DoneRequest) -> dict:
     rec = deployments.get(dep_id)
     if not rec:
         raise HTTPException(404, "unknown deployment")
+    run = rec.get("run") or {}
+    if req.run_id and req.run_id != run.get("id"):
+        return _refuse("stale_run")
     rec = deployments.update(dep_id, summary=req.summary, finished_at=datetime.now(timezone.utc).isoformat())
+    if req.run_id and run.get("keep_open"):
+        return deployments.public(rec)  # a chat response finishes; the wallet remains open for follow-ups
     if rec.get("sweep_when_done") and rec["status"] == "active":  # "sweep back when done"
         return {**rec, "swept": reclaim(dep_id)}
     return rec
@@ -846,3 +852,6 @@ from .routes import sessions as _sessions, site_access as _site_access, sites as
 for _router in (_runs.router, _rules.router, _funding.router, _workspace.router,
                 _sessions.router, _sites_probe.router, _site_access.router, _sites.router):
     app.include_router(_router)
+
+from .research_chat import router as _research_router  # noqa: E402
+app.include_router(_research_router)

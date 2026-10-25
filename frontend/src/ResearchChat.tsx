@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUp, ArrowUpRight, CheckCircle, ChevronDown, Clock, FileSearch02, Globe01, Menu01, MessageChatCircle, Plus, SearchLg, ShieldTick, Stop, Wallet03, XCircle } from '@untitledui/icons';
+import { CHAT_PATH, isTestEnvironment } from './mode';
 import { useWorkspace, mutateWorkspace } from './workspaceStore';
 import { cancelResearch, money, RESEARCH_PROMPT, researchSources, spending, startResearch, resolveWalletFromPrompt, walletHref, type DemoPayment, type ResearchRun } from './researchDemo';
 
@@ -35,13 +36,15 @@ function ResearchSummary({ run, payments }: { run: ResearchRun; payments: DemoPa
   </section>;
 }
 
+const RUN_STORAGE_KEY = isTestEnvironment ? 'cereal-test-chat-run' : 'cereal-chat-run';
+
 export default function ResearchChat() {
   const { workspace, error: storageError } = useWorkspace();
   const query = new URLSearchParams(window.location.search);
   const wallets = workspace.wallets.filter(wallet => !wallet.archived);
   const [clarification, setClarification] = useState<{ message: string; candidates: string[] } | null>(null);
   const [runId, setRunId] = useState<string | null>(() => {
-    try { return query.get('run') ?? sessionStorage.getItem('cereal-chat-run'); } catch { return query.get('run'); }
+    try { return query.get('run') ?? sessionStorage.getItem(RUN_STORAGE_KEY); } catch { return query.get('run'); }
   });
   const [prompt, setPrompt] = useState(() => workspace.researchRuns?.some(item => item.id === runId) ? '' : RESEARCH_PROMPT);
   const [error, setError] = useState('');
@@ -62,8 +65,8 @@ export default function ResearchChat() {
   useEffect(() => { document.title = 'Research chat · Cereal demo'; }, []);
   useEffect(() => {
     try {
-      if (runId) sessionStorage.setItem('cereal-chat-run', runId);
-      else sessionStorage.removeItem('cereal-chat-run');
+      if (runId) sessionStorage.setItem(RUN_STORAGE_KEY, runId);
+      else sessionStorage.removeItem(RUN_STORAGE_KEY);
     } catch { /* wallet storage reports persistence errors separately */ }
   }, [runId]);
   useEffect(() => {
@@ -92,7 +95,7 @@ export default function ResearchChat() {
   return <div className="research-chat">
     {mobileNav && <button className="chat-nav-scrim" aria-label="Close chat navigation" onClick={() => setMobileNav(false)} />}
     <aside className={`chat-sidebar ${mobileNav ? 'open' : ''}`} aria-label="Chat navigation">
-      <a className="chat-brand" href="/demo-chat"><MessageChatCircle /><span>ChatGPT</span><span className="demo-label">Demo</span></a>
+      <a className="chat-brand" href={CHAT_PATH}><MessageChatCircle /><span>ChatGPT</span><span className="demo-label">Demo</span></a>
       <button className="chat-nav-action" onClick={newChat} disabled={active}><Plus />New research</button>
       <div className="chat-sidebar-section"><span className="chat-eyebrow">YOUR CHATS</span>
         {history.length ? history.map(item => <button key={item.id} aria-current={item.id === run?.id ? 'page' : undefined} onClick={() => { setRunId(item.id); setPrompt(''); setMobileNav(false); }}><MessageChatCircle /><span>{item.prompt}</span>{item.status === 'waiting' && <i className="waiting-dot" />}</button>) : <p>Your research will appear here.</p>}
@@ -108,7 +111,7 @@ export default function ResearchChat() {
         {!run ? <section className="chat-welcome"><div className="chat-welcome-icon"><SearchLg /></div><span className="chat-eyebrow">DEEP RESEARCH</span><h1>Curiosity, with a budget.</h1><p>Explore the XRPL ecosystem.<br />Let Cereal take care of the payments.</p>
           <button className="research-suggestion" onClick={() => setPrompt(RESEARCH_PROMPT)}><Globe01 /><span>Research the XRPL ecosystem<small>Documentation, founders, products & funding</small></span><ArrowUpRight /></button>
           {wallet?.demoClosedAt && <div className="chat-setup"><Wallet03 /><div><h2>This wallet’s research is finished</h2><p>Cereal returned its remaining demo funds. Reset this session’s demo activity in Cereal Settings to run the presentation again.</p><a href={walletHref(wallet.id)} target="cereal-wallet" rel="noopener">Open Cereal <ArrowUpRight /></a></div></div>}
-          {!wallets.length && <div className="chat-setup"><Wallet03 /><div><h2>Start with your wallet in Cereal</h2><p>Create a wallet in Cereal and name it in your research prompt.</p><a href="/" target="cereal-wallet" rel="noopener">Open Cereal <ArrowUpRight /></a></div></div>}
+          {!wallets.length && <div className="chat-setup"><Wallet03 /><div><h2>Start with your wallet in Cereal</h2><p>Create a wallet in Cereal and name it in your research prompt.</p><a href={walletHref()} target="cereal-wallet" rel="noopener">Open Cereal <ArrowUpRight /></a></div></div>}
           {clarification && <div className="chat-wallet-clarification" role="status"><p>{clarification.message}</p><div className="chat-wallet-choices">{clarification.candidates.map(id => {
             const candidate = workspace.wallets.find(item => item.id === id); if (!candidate) return null;
             return <button key={id} disabled={busy} onClick={() => void begin(id)}>{candidate.name}<small>{workspace.folders.find(folder => folder.id === candidate.folderId)?.name ?? 'Disposable wallets'} · {money(candidate.balance)} available · {id.slice(-6)}</small></button>;

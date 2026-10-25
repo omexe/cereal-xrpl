@@ -4,7 +4,15 @@ from decimal import Decimal
 
 import pytest
 
-from cereal import config, deployments, directory, rules
+from cereal import config, deployments, directory, rules, rule_intent
+import json
+
+
+def answer(**changes):
+    return dict(spend=None, expires_in_hours=None, approval_threshold=None,
+                clear_approval_threshold=False, sweep_when_done=None, merchants=[], problems=[],
+                needs_add_funds=False) | changes
+
 
 A = "rGrhEwizViewpp8b91RTdUV2MpdWUdaEay"
 B = "rapyJNHMJW1C6BiVvaTXKTjWMZqJnaWXR3"
@@ -18,46 +26,6 @@ STATUS = {A: {"status": "valid"}, C: {"status": "valid"},
           B: {"status": "revoked", "revocation": {"reason": "overcharge", "hash": "REV"}}}
 
 
-# ---- sentence parsing ----------------------------------------------------------------------------------------------
-
-@pytest.mark.parametrize("sentence, fields, ops", [
-    ("Ask me above 0.1", {"approval_threshold": "0.1"}, []),
-    ("only at Vendor A", {}, [("only", ["Vendor A"])]),
-    ("spend up to 0.3", {"spend": "0.3"}, []),
-    ("over 2 days", {"expires_in_hours": 48.0}, []),
-    ("for 3 hours", {"expires_in_hours": 3.0}, []),
-    ("Keep funds when done.", {"sweep_when_done": False}, []),
-    ("sweep back when done", {"sweep_when_done": True}, []),
-    ("no approval threshold", {"approval_threshold": None}, []),
-    ("remove Vendor C", {}, [("remove", ["Vendor C"])]),
-    ("Vendor A and Vendor C only", {}, [("only", ["Vendor A", "Vendor C"])]),
-    ("lower the budget to 0.4", {"spend": "0.4"}, []),
-    ("spend up to 0.3 over 2 days, only at Vendor A and Vendor C. Ask me above $0.2; keep funds when done",
-     {"spend": "0.3", "expires_in_hours": 48.0, "approval_threshold": "0.2", "sweep_when_done": False},
-     [("only", ["Vendor A", "Vendor C"])]),
-])
-def test_sentences_parse_clause_by_clause(sentence, fields, ops):
-    p = rules.parse_sentence(sentence)
-    assert p["problems"] == [] and p["fields"] == fields and p["merchants"] == ops
-
-
-def test_unrecognized_text_is_a_problem_never_a_silent_partial_change():
-    p = rules.parse_sentence("Ask me above 0.1. Get the Swell agenda.")
-    assert p["fields"] == {"approval_threshold": "0.1"}
-    assert p["problems"] == ["didn't understand “Get the Swell agenda”"]
-    assert rules.parse_sentence("spend 0.3 and spend 0.4")["problems"] == ["two different spend limits in one sentence"]
-
-
-def test_a_wallet_name_prefix_is_only_accepted_for_this_wallet():
-    assert rules.parse_sentence("Rules test: ask me above 0.1", "Rules test")["problems"] == []
-    assert rules.parse_sentence("Other wallet: ask me above 0.1", "Rules test")["problems"]
-
-
-def test_adding_money_in_a_sentence_is_refused():
-    p = rules.parse_sentence("add 1 RLUSD")
-    assert "use_add_funds" in p["codes"] and p["problems"][0].startswith("Only Add funds")
-
-
 # ---- the plan and apply, against a fake ledger ---------------------------------------------------------------------
 
 @pytest.fixture
@@ -69,6 +37,14 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "wallet", lambda role: f"wallet:{role}")
     monkeypatch.setattr(rules.keystore, "load", lambda dep_id: f"subagent:{dep_id}")
     monkeypatch.setattr(service, "client", lambda: object())
+    answers = {
+        "Ask me above 0.1. Remove Vendor C. Keep funds when done.": answer(
+            approval_threshold="0.1", sweep_when_done=False,
+            merchants=[{"operation": "remove", "names": ["Vendor C"]}]),
+        "only at Vendor Z": answer(merchants=[{"operation": "only", "names": ["Vendor Z"]}]),
+        "also allow Vendor C": answer(merchants=[{"operation": "add", "names": ["Vendor C"]}]),
+    }
+    monkeypatch.setattr(rule_intent.llm, "extract", lambda system, user, *args: answers[json.loads(user)["request"]])
     ledger = {"balance": Decimal("0.6"), "sent": []}
     monkeypatch.setattr(rules, "rlusd_balance", lambda c, a: ledger["balance"])
     monkeypatch.setattr(service, "rlusd_balance", lambda c, a: ledger["balance"])
@@ -227,10 +203,6 @@ def test_routes_reject_unknown_fields_and_wallets(env):
     assert r["ok"] and deployments.get(rec["id"])["approval_threshold"] is None
 
 
-def test_symbols_left_over_are_problems_not_dropped():
-    assert rules.parse_sentence("Ask me above 10%")["problems"] == ["didn't understand “%”"]
-
-
 def test_add_never_narrows_any_credentialed_vendor(env):
     rec, _ = env
     deployments.update(rec["id"], allowed_payees=[])
@@ -264,3 +236,38 @@ def test_returns_add_up_and_a_reclaim_meanwhile_is_refused(env, monkeypatch):
     monkeypatch.setattr(deployments, "get", reclaimed_after_planning)
     assert rules.apply(rec["id"], {"approval_threshold": "0.1"})["refused"] == "not_active"
     assert real_get(rec["id"])["approval_threshold"] == "0.2"
+
+
+def test_preview_applies_reviewed_ai_fields_without_reinterpretation(env, monkeypatch):
+    rec, ledger = env
+    calls = []
+    def model(system, user, *args):
+        calls.append(json.loads(user))
+        return answer(approval_threshold="0.1", merchants=[{"operation": "remove", "names": ["Vendor C"]}])
+    monkeypatch.setattr(rule_intent.llm, "extract", model)
+    p = rules.preview(rec["id"], {"sentence": "Halve the approval amount and drop the last merchant."})
+    assert p["ok"] and p["resolved_change"] == {"approval_threshold": "0.1", "merchants": [A]}
+    assert calls[0]["current_rules"]["approval_threshold"] == "0.2"
+    assert ledger["sent"] == []
+    out = rules.apply(rec["id"], p["resolved_change"])
+    assert out["ok"] and len(calls) == 1
+    assert deployments.get(rec["id"])["allowed_payees"] == [A]
+
+
+def test_ai_failure_or_ambiguity_never_applies_partial_edits(env, monkeypatch):
+    rec, ledger = env
+    for output in [None, {"spend": "0.3"}, answer(spend="0.3", problems=["Which merchant should be removed?"])]:
+        monkeypatch.setattr(rule_intent.llm, "extract", lambda *args: output)
+        out = rules.apply(rec["id"], {"sentence": "Halve the budget and remove that vendor."})
+        assert out["refused"] == "rules_problems"
+        assert ledger["sent"] == [] and deployments.get(rec["id"])["budget"] == "0.6"
+
+
+def test_ai_proposal_still_checks_budget_and_credentials(env, monkeypatch):
+    rec, ledger = env
+    monkeypatch.setattr(rule_intent.llm, "extract", lambda *args: answer(spend="2"))
+    assert rules.apply(rec["id"], {"sentence": "Double the budget."})["refused"] == "use_add_funds"
+    monkeypatch.setattr(rule_intent.llm, "extract", lambda *args: answer(merchants=[{"operation": "only", "names": ["Vendor B"]}]))
+    out = rules.apply(rec["id"], {"sentence": "Switch to Vendor B."})
+    assert out["refused"] == "rules_problems" and "not trusted" in out["problems"][0]
+    assert ledger["sent"] == []

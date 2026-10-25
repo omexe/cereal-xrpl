@@ -1,4 +1,5 @@
 import type { Wallet, Workspace } from './wallets';
+import { WALLET_PATH } from './mode';
 
 export const RESEARCH_PROMPT = 'Do deep research on the XRPL product, browse multiple sites discovering docs, founder, raising information, etc. If needed, use our XRP research cereal wallet.';
 // Fixed, fictional quotes and risk signals belong to Cereal's demo catalog, never to the chat request.
@@ -27,7 +28,7 @@ export interface ResearchRun {
 export const cents = (amount: number) => Math.round(amount * 100);
 export const money = (amount: number) => `$${amount.toFixed(2)}`;
 export const spending = (wallet: Wallet) => (wallet.transactions ?? []).reduce((sum, item) => sum + cents(item.amount), 0) / 100;
-export const walletHref = (walletId?: string) => walletId ? `/?wallet=${encodeURIComponent(walletId)}` : '/';
+export const walletHref = (walletId?: string) => walletId ? `${WALLET_PATH}?wallet=${encodeURIComponent(walletId)}` : WALLET_PATH;
 
 function refusal(wallet: Wallet | undefined, payment: DemoPayment, now: number): { code: string; reason: string } | null {
   const source = researchSources.find(item => item.id === payment.sourceId);
@@ -139,7 +140,7 @@ export function resetResearchWallet(state: Workspace, walletId: string) {
   state.researchRuns = (state.researchRuns ?? []).filter(run => run.walletId !== walletId);
 }
 
-export interface WalletResolution { walletId?: string; message: string; candidates: Wallet[] }
+export interface WalletResolution { explicit: boolean; walletId?: string; message: string; candidates: Wallet[] }
 const normalizeName = (name: string) => name.trim().replace(/^["“”']+|["“”']+$/g, '').replace(/\s+/g, ' ').toLocaleLowerCase();
 
 /** Match explicit payment-wallet instructions by exact name, never the first wallet or a substring. */
@@ -148,8 +149,8 @@ export function resolveWalletFromPrompt(state: Workspace, prompt: string): Walle
   const instructions = /\buse\s+(?:(?:my|our|the)\s+)?(?:cereal\s+)?wallet\s+(?:(?:named|called)\s+)?["“]([^"”]+)["”]|\buse\s+(?:(?:my|our|the)\s+)?["“]([^"”]+)["”](?:\s+(?:cereal\s+)?wallet)?|\buse\s+(?:(?:my|our|the)\s+)?([^.!?\n]+?)\s+(?:cereal\s+)?wallet\b/gi;
   for (const match of prompt.matchAll(instructions)) names.push(normalizeName(match[1] ?? match[2] ?? match[3]));
   const unique = [...new Set(names)];
-  const matches = state.wallets.filter(wallet => unique.includes(normalizeName(wallet.name)));
-  if (unique.length === 1 && matches.length === 1) return { walletId: matches[0].id, message: '', candidates: matches };
-  if (matches.length) return { message: 'Which wallet should I use for payments? More than one wallet matches your instruction.', candidates: matches.filter(wallet => !wallet.archived && !wallet.demoClosedAt) };
-  return { message: unique.length ? `I couldn’t find a wallet named “${names[0]}”. Which existing wallet should I use?` : 'Which Cereal wallet should I use for payments? Name it in your prompt, for example: “Use my Apollo Research wallet.”', candidates: state.wallets.filter(wallet => !wallet.archived && !wallet.demoClosedAt) };
+  const matches = state.wallets.filter(wallet => unique.some(name => normalizeName(wallet.name) === name || normalizeName(wallet.name) === `${name} wallet`));
+  if (unique.length === 1 && matches.length === 1) return { explicit: true, walletId: matches[0].id, message: '', candidates: matches };
+  if (matches.length) return { explicit: true, message: 'Which wallet should I use for payments? More than one wallet matches your instruction.', candidates: matches.filter(wallet => !wallet.archived && !wallet.demoClosedAt) };
+  return { explicit: unique.length > 0, message: unique.length ? `I couldn’t find a wallet named “${names[0]}”. Which existing wallet should I use?` : 'Which Cereal wallet should I use for payments? Name it in your prompt, for example: “Use my Apollo Research wallet.”', candidates: state.wallets.filter(wallet => !wallet.archived && !wallet.demoClosedAt) };
 }

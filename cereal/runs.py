@@ -3,7 +3,7 @@
     start(dep_id) → {ok, run} | refusal      POST /subagents/{id}/run   (cereal/routes/runs.py)
     current(dep_id) → {ok, run}              GET  /subagents/{id}/run
 
-What a run does, the same way cereal/chat.py runs a subagent: plan from the wallet's own sentence with real quotes
+What a run does, the same way cereal/chat.py runs a subagent: plan from an optional task prompt (otherwise the wallet's own sentence) with real quotes
 (`pricing.plan`, only among the vendors the wallet allows, within what the wallet holds), then start
 `python -m cereal.subagent <id> <task> --buy url@max ...` as a separate process. The subagent signs with its own key;
 cereal co-signs each payment after its policy checks (the owner's Ledger above the threshold). When it reports done,
@@ -22,8 +22,8 @@ Rules
 - One live run per wallet: a second start while a run is starting, or running with its process alive, is refused
   (`already_running`). Starts for the same wallet are serialised in this process.
 - Never retried: a failed or timed-out run is recorded and left for the owner to decide (start again, or clean up).
-- A new run never buys an item twice: items an earlier run of this wallet already paid for (settled, or handed to a
-  vendor and not known to have failed) are left out of the plan; if nothing is left, the start is `already_bought`.
+- Ordinary runs skip previously paid items. Chat runs (keep_open) allow a new explicit request to purchase a
+  settled resource again; unresolved earlier payments block repetition. Reusing a request ID never pays twice.
 - Refusals send nothing and record no run: not_active, expired, already_running, balance_unavailable (the ledger
   could not be read), nothing_to_buy, already_bought, no_trusted_vendor, over_budget (the quotes exceed the balance).
 - Explicit specs (`start(id, specs=["url@max"])`, used by site purchases): the plan is exactly those URLs, with no
@@ -135,6 +135,22 @@ def _log_tail(path: str | None, lines: int = 40) -> list[str]:
         return []
 
 
+def _received_resources(path: str | None) -> list[dict]:
+    """Public documents actually returned by successful purchases, distinct from ledger settlement."""
+    resources = {}
+    for line in _log_tail(path, lines=200):
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict) or event.get("event") != "resource_received":
+            continue
+        data = event.get("data")
+        if isinstance(data, dict) and isinstance(data.get("resource"), str) and isinstance(data.get("title"), str):
+            resources[data["resource"]] = {k: data[k] for k in ("resource", "hash", "title", "summary", "sample", "findings") if k in data}
+    return list(resources.values())
+
+
 def _failure_reason(path: str | None) -> str | None:
     """The last line of the subagent's output that is not one of its JSON events (usually the exception)."""
     for line in reversed(_log_tail(path)):
@@ -181,7 +197,7 @@ def _watch(dep_id: str, run_id: str, proc: subprocess.Popen, log_file, started_a
         elif status is None:  # the watcher itself broke: never leave the run looking alive
             status, code, error = "failed", proc.poll(), "cereal lost track of the subagent process"
         _update_run(dep_id, run_id, status=status, exit_code=code, finished_at=_now(),
-                    summary=_summary_since(dep_id, started_at), error=error)
+                    summary=_summary_since(dep_id, started_at), error=error, resources=_received_resources(run.get("log")))
         with _owned_lock:
             _owned.discard(run_id)
 
@@ -227,15 +243,20 @@ def _already_paid(rec: dict) -> set[str]:
             if p.get("resource") and p.get("ok") is not False} - {None}
 
 
-def _plan(rec: dict, envelope: Decimal) -> tuple[dict | None, list[str], dict | None]:
+def _plan(rec: dict, envelope: Decimal, task: str | None = None, repeat_completed: bool = False) -> tuple[dict | None, list[str], dict | None]:
     """Plan exactly like cereal/chat.py. Returns (plan record, --buy specs, refusal)."""
     from . import pricing
-    goal = rec.get("sentence") or rec["task"]
+    goal = task or rec.get("sentence") or rec["task"]
     p = pricing.plan(goal, envelope, allowed=rec.get("allowed_payees") or None)
     if not p["needs"]:
         return None, [], _refuse("nothing_to_buy", goal=goal,
                                  hint="name what to buy in the wallet's sentence, for example the agenda or the speaker list")
-    paid = _already_paid(rec)
+    if repeat_completed:
+        pending = {_item_of(p.get("resource")) for p in rec.get("payments", [])
+                   if p.get("resource") and p.get("ok") is not False and p.get("validated") is not True}
+        if pending.intersection(p["needs"]):
+            return None, [], _refuse("payment_pending", items=sorted(pending.intersection(p["needs"])))
+    paid = set() if repeat_completed else _already_paid(rec)
     todo = [l for l in p["lines"] if l["item"] not in paid]  # a second run never buys the same item twice
     if not todo:
         return None, [], _refuse("already_bought", items=p["needs"])
@@ -320,7 +341,7 @@ def _startable(rec: dict | None) -> dict | None:
     """The refusal for a wallet that cannot run now, or None."""
     if not rec:
         return _refuse("unknown_deployment")
-    if rec["status"] != "active" or not rec.get("subwallet"):
+    if rec["status"] != "active" or rec.get("archived") or not rec.get("subwallet"):
         return _refuse("not_active", status=rec["status"])
     if datetime.now(timezone.utc) >= datetime.fromisoformat(rec["expires_at"]):
         return _refuse("expired", expires_at=rec["expires_at"])
@@ -335,12 +356,28 @@ def current(dep_id: str) -> dict:
     return {"ok": True, "run": reconcile(dep_id, rec)}
 
 
-def start(dep_id: str, specs: list[str] | None = None, task: str | None = None) -> dict:
-    """Start the wallet's task. Without `specs` the plan comes from the wallet's sentence and the vendor catalogs;
-    with `specs` (["url@max", ...], e.g. a site purchase) the plan is exactly those, with no catalog planning.
-    `task` is the subagent's task line (default: "<name>: buy <items>"). Guards, reservation and watcher are the same."""
+def _replay(rec: dict | None, task: str | None, request_id: str | None, keep_open: bool = False, specs: list[str] | None = None) -> dict | None:
+    """A lost HTTP response must never turn a retry into a second purchase run."""
+    if not rec or not request_id:
+        return None
+    prior = (rec.get("run_requests") or {}).get(request_id)
+    if not prior:
+        return None
+    if prior.get("task") != task or prior.get("keep_open", False) != keep_open or prior.get("specs") != specs:
+        return _refuse("request_conflict")
+    run = reconcile(rec["id"], rec)
+    if run and run["id"] == prior["run_id"]:
+        return {"ok": True, "run": run}
+    return _refuse("request_superseded", run_id=prior["run_id"])
+
+
+def start(dep_id: str, specs: list[str] | None = None, task: str | None = None, request_id: str | None = None, keep_open: bool = False) -> dict:
+    requested_specs = list(specs) if specs is not None else None
     with _wallet_lock(dep_id):  # a second start for this wallet waits here, then sees the first run
         rec = deployments.get(dep_id)
+        replay = _replay(rec, task, request_id, keep_open, requested_specs)
+        if replay is not None:
+            return replay
         refused = _startable(rec)
         if refused:
             return refused
@@ -350,8 +387,10 @@ def start(dep_id: str, specs: list[str] | None = None, task: str | None = None) 
         envelope = _envelope(rec)
         if envelope is None:
             return _refuse("balance_unavailable", hint="the ledger could not be read; nothing was started")
+        if envelope <= 0:
+            return _refuse("over_budget", remaining=str(envelope))
         if specs is None:
-            plan, specs, refused = _plan(rec, envelope)
+            plan, specs, refused = _plan(rec, envelope, task, repeat_completed=keep_open)
         else:
             plan, specs, refused = _explicit_plan(rec, envelope, list(specs), task)
         if refused:
@@ -362,6 +401,9 @@ def start(dep_id: str, specs: list[str] | None = None, task: str | None = None) 
         # Lock order: runs.py never takes service._main_wallet, so it can never wait on it while holding this one.
         with deployments._lock:
             rec = deployments.get(dep_id)  # planning took a while: the wallet may have been reclaimed meanwhile
+            replay = _replay(rec, task, request_id, keep_open, requested_specs)
+            if replay is not None:
+                return replay
             refused = _startable(rec)
             if refused:
                 return refused
@@ -371,11 +413,14 @@ def start(dep_id: str, specs: list[str] | None = None, task: str | None = None) 
             started_at = _now()
             run = {"id": run_id, "deployment": dep_id, "status": "starting", "started_at": started_at,
                    "finished_at": None, "exit_code": None, "pid": None, "log": str(runs_dir() / f"{run_id}.log"),
-                   "plan": plan, "summary": None, "error": None}
+                   "plan": plan, "task": task or plan["goal"], "request_id": request_id, "keep_open": keep_open, "summary": None, "error": None}
             with _owned_lock:
                 _owned.add(run_id)
-            deployments.update(dep_id, run=run, buy_only=True)  # from now on cereal co-signs only plan purchases
-        return _launch(rec, run, specs, task)
+            requests = dict(rec.get("run_requests") or {})
+            if request_id:
+                requests[request_id] = {"task": task, "run_id": run_id, "keep_open": keep_open, "specs": requested_specs}
+            deployments.update(dep_id, run=run, run_requests=requests, buy_only=True)  # from now on cereal co-signs only plan purchases
+        return _launch(rec, run, specs, task if plan.get("explicit") else None)
 
 
 def _launch(rec: dict, run: dict, specs: list[str], task: str | None = None) -> dict:
@@ -384,7 +429,7 @@ def _launch(rec: dict, run: dict, specs: list[str], task: str | None = None) -> 
     log_path = Path(run["log"])
     task = task or f"{rec.get('name') or rec['task']}: buy {' + '.join(plan['items'])}"
     cmd = [sys.executable, "-m", "cereal.subagent", dep_id, task] + [x for sp in specs for x in ("--buy", sp)]
-    env = {**os.environ, "CEREAL_SERVICE_URL": config.SERVICE_URL}  # the subagent talks to this service
+    env = {**os.environ, "CEREAL_SERVICE_URL": config.SERVICE_URL, "CEREAL_RUN_ID": run_id}  # the subagent talks to this service
     log_file = proc = None
     try:
         log_path.parent.mkdir(parents=True, exist_ok=True)

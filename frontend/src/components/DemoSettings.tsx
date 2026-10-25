@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ArrowUpRight } from '@untitledui/icons';
+import { CHAT_PATH, isTestEnvironment } from '../mode';
 import type { Wallet } from '../wallets';
 import type { ResearchRun } from '../researchDemo';
 import { resetResearchWallet } from '../researchDemo';
@@ -15,8 +16,8 @@ export function DemoSettings({ wallets, runs, selectedId }: { wallets: Wallet[];
   return <section className="demo-settings" aria-labelledby="demo-tools-title">
     <h3 id="demo-tools-title">Developer tools</h3>
     <p className="dialog-description">Open the separate research chat demo, then name any existing wallet in your prompt. Its current rules and activity stay in Cereal.</p>
-    <a className="research-launch" href="/demo-chat" target="cereal-research-chat" rel="noopener">Open demo chat <ArrowUpRight /></a>
-    <p className="demo-note">Example: “Research XRPL. Use my Apollo Research wallet for payments.”</p>
+    <a className="research-launch" href={CHAT_PATH} target="cereal-research-chat" rel="noopener">{isTestEnvironment ? 'Open test chat' : 'Open demo chat'} <ArrowUpRight /></a>
+    <p className="demo-note">Example: “Research XRPL. Use my XRP research wallet for payments.”</p>
     <details><summary>Demo scenario & replay</summary>
       <p className="demo-note">Paid sources: Ledger Lens ($1.20), Venture Atlas ($7.50), Open Ledger Index ($0.65). Token Insider is always blocked by a fictional fraud signal. Your wallet’s existing merchant list, budget, and approval threshold determine every other outcome.</p>
       <label>Wallet activity to reset<select value={walletId} onChange={event => { setWalletId(event.target.value); setConfirm(false); setMessage(''); }}>

@@ -1,8 +1,9 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
-import { isLive } from './mode';
+import { isLive, isTestEnvironment } from './mode';
 import ResearchChat from './ResearchChat';
+import LiveResearchChat from './LiveResearchChat';
 import { useResearchRunner } from './workspaceStore';
 import { DevelopmentFeedback } from './components/DevelopmentFeedback';
 import './tokens.css';
@@ -11,9 +12,9 @@ import './research.css';
 
 function DemoApp() {
   useResearchRunner(!isLive);
-  if (window.location.pathname === '/demo-chat') return isLive
-    ? <main><h1>Research chat requires mock mode</h1><p>Start the frontend with <code>npm run dev:mock</code>, then open Developer tools in Settings.</p><a href="/">Back to Cereal</a></main>
-    : <ResearchChat />;
+  const path = window.location.pathname.replace(/\/$/, '');
+  if (path === '/test-chat' || (path === '/demo-chat' && isLive)) return <LiveResearchChat />;
+  if ((isTestEnvironment && path === '/fixture-chat') || path === '/demo-chat') return <ResearchChat />;
   return <App />;
 }
 

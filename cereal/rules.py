@@ -3,10 +3,10 @@
     POST /subagents/{id}/rules/preview  → {ok, changes, problems, notes, rules}   reads only; signs and sends nothing
     POST /subagents/{id}/rules          → re-validates, then persists              {ok, rules, changes, notes, hashes, wallet}
 
-A change is either structured fields or a `sentence`, never both. A sentence is a partial edit read clause by clause by
-a deterministic parser (no model): "Ask me above 0.1", "only at Vendor A", "spend up to 0.3", "over 2 days",
-"for 3 hours", "keep funds when done", "sweep back when done", "remove Vendor C", "no approval threshold". Anything it
-does not recognise is a problem, and a change with any problem is refused whole: there is no silent partial change.
+A change is either structured fields or a `sentence`, never both. AI interprets a sentence using the current
+rules and vendor directory. Its partial proposal is validated by the same policy as explicit fields. Any ambiguity,
+unsupported request, invalid answer, or unavailable model blocks the entire change; there is no parser fallback.
+Previews return `resolved_change` so Apply revalidates the reviewed fields without another model interpretation.
 
 Mutable fields (and only these; anything else is rejected by the route's model):
 - merchants (allowed_payees): every vendor must resolve (cereal's directory, or an r-address) and hold a valid cereal
@@ -47,7 +47,6 @@ rules change is not one.
 from __future__ import annotations
 
 import math
-import re
 import threading
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
@@ -56,7 +55,7 @@ from xrpl.models.transactions import Payment
 
 from . import config, deployments, directory, keystore, vendors
 from .ledger import job_memo, multisign_submit, rlusd, rlusd_balance, stamp
-from .wallet_card import AMOUNT
+from .rule_intent import interpret
 
 MAX_HOURS = 7 * 24
 FIELDS = ("spend", "expires_in_hours", "merchants", "approval_threshold", "sweep_when_done")
@@ -67,128 +66,6 @@ _locks_guard = threading.Lock()
 def _wallet_lock(dep_id: str) -> threading.Lock:
     with _locks_guard:
         return _locks.setdefault(dep_id, threading.Lock())
-
-
-# ---- the sentence parser: clause by clause, deterministic ---------------------------------------------------------
-
-_I = re.I
-_DONE = r"(?:\s+(?:when|once|after)\s+(?:it'?s\s+|it\s+is\s+)?(?:done|finished|complete))?"
-_SWEEP_OFF = re.compile(r"\b(?:keep(?:\s+the)?\s+(?:funds|leftovers|money|balance|rest|it)(?:\s+in\s+the\s+wallet)?"
-                        r"|(?:don'?t|do\s+not|never)\s+sweep(?:\s+(?:it\s+)?(?:back|home))?|no\s+sweep(?:ing)?)" + _DONE, _I)
-_SWEEP_ON = re.compile(r"\b(?:sweep(?:\s+(?:it|the\s+(?:funds|leftovers|money|rest)))?(?:\s+(?:back|home))?"
-                       r"|(?:send|return|move)\s+(?:the\s+)?(?:funds|leftovers|money|rest|it)\s+(?:back|home))"
-                       r"(?:\s+to\s+the\s+main\s+wallet)?" + _DONE, _I)
-_THRESHOLD_OFF = re.compile(r"\b(?:(?:don'?t|do\s+not|never|no\s+need\s+to)\s+ask\s+me(?:\s+for\s+approval)?"
-                            r"(?:\s+for\s+anything)?|no\s+(?:approval\s+)?threshold"
-                            r"|(?:remove|clear|drop)\s+the\s+(?:approval\s+)?threshold)\b", _I)
-_THRESHOLD = re.compile(r"\b(?:ask\s+me|ask\s+for\s+(?:my\s+)?approval|(?:needs?|requires?)\s+my\s+approval|approval)"
-                        r"\s+(?:(?:for|on)\s+(?:anything|payments?|any\s+payment)\s+)?"
-                        r"(?:(?:if|when)\s+(?:it'?s\s+|they'?re\s+|a\s+payment\s+is\s+)?)?"
-                        r"(?:above|over|more\s+than|greater\s+than|>)\s*" + AMOUNT, _I)
-_THRESHOLD_SET = re.compile(r"\b(?:(?:set|change|lower|raise|make)\s+(?:the\s+)?)?approval\s+threshold\s*"
-                            r"(?:to|of|at|is|=)?\s*" + AMOUNT, _I)
-_NUM = r"(\d+(?:\.\d+)?|an?|one)"
-_UNITS = r"(minutes?|mins?|hours?|hrs?|h|days?|d|weeks?|wks?|w)"
-_DURATION = re.compile(r"\b(?:(?:expires?|ends?|lasts?|runs?)\s+(?:in\s+|for\s+|after\s+)?|for\s+(?:the\s+next\s+|another\s+)?"
-                       r"|over\s+(?:the\s+next\s+)?|within\s+|lasting\s+|in\s+)" + _NUM + r"\s*" + _UNITS
-                       + r"\b(?:\s+from\s+now)?", _I)
-_TODAY = re.compile(r"\b(?:(?:until|for|by|through)\s+)?(?:the\s+end\s+of\s+)?(?:today|tonight)\b", _I)
-_TOPUP = re.compile(r"\b(?:add|top\s*-?\s*up(?:\s+(?:with|by))?|deposit|fund\s+(?:it\s+)?with|put\s+in)\s+" + AMOUNT, _I)
-_SPEND = re.compile(r"\b(?:(?:lower|reduce|cut|drop|decrease|set|change|raise|increase|bump|make|put)\s+(?:the\s+)?"
-                    r"(?:spend(?:ing)?\s+limit|budget|limit|spend|cap)(?:\s+(?:down|up))?\s*(?:to|at|of)?"
-                    r"|spend(?:ing)?\s+limit\s*(?:of|to|at|is|=)?|budget\s*(?:of|to|at|is|=)?"
-                    r"|spend\s+(?:up\s+to|at\s+most|no\s+more\s+than|max(?:imum)?|only)?|up\s+to|at\s+most|no\s+more\s+than"
-                    r"|limit\s+(?:it\s+)?(?:to|of|at)?|cap\s+(?:it\s+)?(?:at|of|to)?)\s*" + AMOUNT, _I)
-_ONLY = re.compile(r"\bonly\s+(?:at|from|with|on|pay|use|buy\s+from)\s+([^|]+)", _I)
-_ADD = re.compile(r"\b(?:also\s+)?(?:add|allow|include)\s+(?!\$?\s*\d)([^|]+)", _I)
-_REMOVE = re.compile(r"\b(?:remove|drop|exclude|disallow|block|(?:stop|no\s+longer)\s+(?:paying|using|buying\s+from|pay|use))"
-                     r"\s+(?!\$?\s*\d)([^|]+)", _I)
-_SUFFIX_ONLY = re.compile(r"\s*(?:(?:and|then|also)\s+)?(.+?)\s+only\s*", _I)
-_FILLER = {"and", "then", "also", "please", "plus", "but", "now", "just", "so", "ok", "okay", "rlusd", "it", "the",
-           "wallet", "this", "instead", "too"}
-_CLAUSES = re.compile(r"\.(?=\s|$)|(?<!\d)\.(?!\d)|[;!?\n]+")
-
-
-def _hours(n: str, unit: str) -> float:
-    n = 1.0 if n.lower() in ("a", "an", "one") else float(n)
-    u = unit.lower()
-    return n * (24 * 7 if u.startswith("w") else 24 if u.startswith("d") else 1 / 60 if u.startswith("m") else 1)
-
-
-def _names(text: str) -> list[str]:
-    out = []
-    for n in re.split(r"\s*(?:,|\band\b|&|\bor\b|\+)\s*", text.strip(" ,"), flags=_I):
-        n = re.sub(r"^the\s+", "", n.strip(" ,"), flags=_I)
-        if n:
-            out.append(n)
-    return out
-
-
-def parse_sentence(sentence: str, name: str | None = None) -> dict:
-    """Read a partial rules edit. Returns {fields, merchants: [(op, [names])], problems, codes}; `fields` holds only
-    what the sentence states (approval_threshold None = clear it). Never guesses: unread text is a problem."""
-    fields: dict = {}
-    ops: list[tuple[str, list[str]]] = []
-    problems: list[str] = []
-    codes: set[str] = set()
-    s = " ".join(sentence.split())
-    m = re.match(r"^\s*([^:.,]{2,60}):\s*(.+)$", s)
-    if m:  # "Rules test: …" names the wallet; fine when it is this wallet, otherwise it is not a rule
-        norm = lambda x: re.sub(r"[^a-z0-9]", "", (x or "").lower())
-        if name and norm(m.group(1)) == norm(name):
-            s = m.group(2)
-        else:
-            problems.append(f"didn't understand “{m.group(1)}:” (a name isn't a spending rule)")
-            s = m.group(2)
-
-    def put(key: str, value, what: str) -> None:
-        if key in fields and fields[key] != value:
-            problems.append(f"two different {what} in one sentence")
-        fields[key] = value
-
-    for clause in (c.strip() for c in _CLAUSES.split(s)):
-        if not clause:
-            continue
-        text = clause
-
-        def take(rx: re.Pattern, on) -> None:
-            nonlocal text
-            while True:
-                mm = rx.search(text)
-                if not mm:
-                    return
-                on(mm)
-                text = text[:mm.start()] + " | " + text[mm.end():]
-
-        take(_THRESHOLD_OFF, lambda mm: put("approval_threshold", None, "approval thresholds"))
-        take(_THRESHOLD, lambda mm: put("approval_threshold", mm.group(1), "approval thresholds"))
-        take(_THRESHOLD_SET, lambda mm: put("approval_threshold", mm.group(1), "approval thresholds"))
-        take(_SWEEP_OFF, lambda mm: put("sweep_when_done", False, "instructions for when it's done"))
-        take(_SWEEP_ON, lambda mm: put("sweep_when_done", True, "instructions for when it's done"))
-        take(_DURATION, lambda mm: put("expires_in_hours", _hours(mm.group(1), mm.group(2)), "durations"))
-        take(_TODAY, lambda mm: put("expires_in_hours", 12.0, "durations"))  # same reading as a new wallet's card
-
-        def topup(mm):
-            codes.add("use_add_funds")
-            problems.append(f"Only Add funds can raise a wallet's budget (asked to add {mm.group(1)} RLUSD): "
-                            "a top-up needs your Ledger")
-        take(_TOPUP, topup)
-        take(_SPEND, lambda mm: put("spend", mm.group(1), "spend limits"))
-        take(_ONLY, lambda mm: ops.append(("only", _names(mm.group(1)))))
-        take(_REMOVE, lambda mm: ops.append(("remove", _names(mm.group(1)))))
-        take(_ADD, lambda mm: ops.append(("add", _names(mm.group(1)))))
-        for seg in text.split("|"):
-            seg = seg.strip(" ,")
-            words = [w for w in (t.strip("()[]\"'“”‘’") for t in re.findall(r"[^\s,]+", seg.lower()))
-                     if w and w not in _FILLER]
-            if not words:
-                continue
-            mm = _SUFFIX_ONLY.fullmatch(seg)  # "Vendor A and Vendor C only"
-            if mm:
-                ops.append(("only", _names(mm.group(1))))
-            else:
-                problems.append(f"didn't understand “{seg}”")
-    return {"fields": fields, "merchants": ops, "problems": problems, "codes": codes}
 
 
 # ---- the plan: what would change, what is wrong, what to know -----------------------------------------------------
@@ -266,7 +143,13 @@ def plan(rec: dict, change: dict, c=None, known: list[dict] | None = None) -> di
         elif not sentence.strip():
             problems.append("the sentence is empty")
         else:
-            parsed = parse_sentence(sentence, rec.get("name") or rec.get("task"))
+            if known is None:
+                try:
+                    known = directory.list_vendors(c)
+                except Exception:
+                    return {"ok": False, "changes": [], "problems": ["Could not load the vendor directory. Try again."],
+                            "notes": [], "rules": cur, "returns": "0", "codes": [], "updates": {}}
+            parsed = interpret(sentence, rec.get("name") or rec.get("task") or "", cur, known)
             fields, ops = dict(parsed["fields"]), parsed["merchants"]
             problems += parsed["problems"]; codes |= parsed["codes"]
             if not fields and not ops and not problems:
@@ -419,8 +302,12 @@ def plan(rec: dict, change: dict, c=None, known: list[dict] | None = None) -> di
     if changes and not problems:
         notes.append("cereal enforces the new rules from the next payment it co-signs")
     rules = {**cur, **updates}
+    resolved = dict(fields)
+    if ops and not problems:
+        resolved["merchants"] = rules["allowed_payees"]
     return {"ok": not problems, "changes": changes, "problems": problems, "notes": notes, "rules": rules,
-            "returns": _s(excess), "codes": sorted(codes), "updates": updates}
+            "returns": _s(excess), "codes": sorted(codes), "updates": updates,
+            "resolved_change": resolved if not problems else None}
 
 
 # ---- preview and apply --------------------------------------------------------------------------------------------

@@ -45,4 +45,3 @@ for role in ("VENDOR_D", "VENDOR_E"):
         r = submit_and_wait(AccountSet(account=addr, domain=DOMAIN.encode().hex()), client, wallet).result
         print(f"  {role} domain: {r['meta']['TransactionResult']} {r['hash']}")
     print(f"  {role:9s} {addr}  ({source})")
-
