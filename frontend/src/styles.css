@@ -298,3 +298,34 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
   .settings-rows dd { text-align: left; margin-bottom: 10px; }
   .settings-events { max-height: none; overflow: visible; }
 }
+
+/* unit 2 */
+/* Live New wallet: the reviewed card (I05/R07), progress while the Ledger approves and cereal locks and funds. */
+.wallet-card { border: 1px solid var(--color-border); border-radius: 10px; padding: 16px; background: var(--color-surface-subtle); }
+.wallet-card-summary { font: var(--font-body); color: var(--color-text-primary); }
+.wallet-card-rules { margin: 14px 0 0; display: grid; gap: 10px; }
+.wallet-card-rules > div { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 12px; align-items: baseline; }
+.wallet-card-rules dt { font: var(--font-label); color: var(--color-text-muted); }
+.wallet-card-rules dd { margin: 0; font: var(--font-ui); color: var(--color-text-primary); overflow-wrap: anywhere; }
+.card-vendors { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.card-vendor { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.card-vendor svg { width: var(--icon-inline); height: var(--icon-inline); stroke-width: var(--icon-stroke); flex-shrink: 0; color: var(--color-text-secondary); }
+.card-vendor-state { font: var(--font-caption); color: var(--color-text-secondary); }
+.card-vendor.not-allowed, .card-vendor.not-allowed svg, .card-vendor.not-allowed .card-vendor-state { color: var(--color-error); }
+.card-vendor.not-allowed .card-vendor-state { font: var(--font-label); }
+.card-address { font: var(--font-caption); color: var(--color-text-muted); }
+.card-problems, .card-notes { margin: 14px 0 0; padding-left: 18px; display: grid; gap: 4px; font: var(--font-caption); }
+.card-problems { color: var(--color-error); }
+.card-notes { color: var(--color-text-secondary); }
+.card-parser { font: var(--font-caption); color: var(--color-text-muted); margin-top: 12px; }
+.wallet-notice { display: flex; align-items: flex-start; gap: 8px; font: var(--font-ui); color: var(--color-text-primary); margin-bottom: 14px; }
+.wallet-notice svg { width: var(--icon-inline); height: var(--icon-inline); stroke-width: var(--icon-stroke); flex-shrink: 0; margin-top: 2px; color: var(--color-accent); }
+.wallet-progress { font: var(--font-control); color: var(--color-text-primary); margin-top: 16px; display: flex; flex-direction: column; gap: 4px; }
+.wallet-progress span { font: var(--font-caption); color: var(--color-text-secondary); }
+.wallet-error { font: var(--font-ui); color: var(--color-error); margin-top: 16px; }
+.wallet-error ul { margin: 6px 0 0; padding-left: 18px; font: var(--font-caption); display: grid; gap: 2px; overflow-wrap: anywhere; }
+.dialog-content .dev-only .demo-note { margin: 0; font: var(--font-caption); }
+.wallet-card-actions { display: flex; gap: 10px; margin-top: 16px; }
+.wallet-card-actions .secondary-button { width: auto; margin: 0; padding: 11px 16px; font: var(--font-control); }
+.wallet-card-actions .secondary-button:disabled { opacity: .4; }
+.wallet-card-actions .primary-button { flex: 1; padding: 11px 16px; }
