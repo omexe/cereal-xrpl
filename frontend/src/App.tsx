@@ -226,6 +226,7 @@ export default function App() {
         </div>}
         <div className="home-illustration"><img src="/assets/home-organism.svg" width="640" height="620" alt="" /></div>
       </section> : selected ? <WalletDetail wallet={selected} onAddFunds={openFunds} onEditConstraints={openConstraints} onRestore={toggleArchive}
+          vendors={live.vendors}
           actions={<WalletActions app={app} wallet={selected} />} />
         : <div className="empty-details"><h1>Create a wallet<br />for your next task.</h1><button className="primary-button" onClick={() => setModal('wallet')}>Create a wallet</button></div>}
 
