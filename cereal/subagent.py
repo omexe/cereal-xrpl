@@ -96,8 +96,13 @@ class Subagent:
             out["retried_after_409"] = True
         if not ok:
             out["error"] = _body(paid)
-            if _validated(self.c, co["hash"]) == "tesSUCCESS":
+            settled = _validated(self.c, co["hash"])
+            if settled == "tesSUCCESS":
                 out["refused"] = "paid_not_served"  # evidence: the validated payment; the vendor owes the resource
+                # the delivery check: cereal records it and, for an owned wallet, blocks the owner's sites paying this
+                # address (it reads the payee and resource from its own payment record for this hash, not from here)
+                report(self.dep_id, "paid_not_delivered", {"result": settled, "hash": co["hash"]},
+                       {"resource": url, "payee": req.pay_to, "price": str(req.amount), "status": paid.status_code})
         return out
 
     def buy_ap4m(self, url: str, max_rlusd: str = "0.25") -> dict:

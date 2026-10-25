@@ -3,25 +3,99 @@
 A user is a name plus a random bearer token (only its hash is stored, next to the record file). Requests carry
 `Authorization: Bearer <token>`; the React app keeps the token in the browser (src/session.ts). This scopes sites and
 the wallets bought for them to one user; it is not yet full account security (checklist R05).
+
+Store: <records stem>.users.json, {"u_<hex>": {"id", "name", "token_sha256", "created_at"}}, written atomically under
+a machine-wide lock (cereal/sidestore.py). The token itself is never stored, logged or returned again after
+create_session.
 """
 from __future__ import annotations
+
+import hashlib
+import hmac
+import secrets
+import unicodedata
+from datetime import datetime, timezone
+
+from .sidestore import SideStore
+
+MAX_NAME = 40
+_store = SideStore(".users.json")
+
+
+def _hash(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _public(u: dict) -> dict:
+    return {"id": u["id"], "name": u["name"]}
+
+
+def clean_name(raw: object) -> tuple[str | None, str | None]:
+    """(trimmed name, None) or (None, why it is not a valid name): 1-40 printable characters."""
+    if not isinstance(raw, str) or not raw.strip():
+        return None, "empty"
+    name = unicodedata.normalize("NFC", raw.strip())
+    if len(name) > MAX_NAME:
+        return None, "too_long"
+    if not name.isprintable():
+        return None, "unprintable"
+    return name, None
 
 
 def create_session(name: str) -> dict:
     """New user: {ok: True, user: {id, name}, token} (the token is shown once), or a refusal (invalid_name)."""
-    raise NotImplementedError
+    clean, why = clean_name(name)
+    if why:
+        return {"ok": False, "refused": "invalid_name", "problem": why, "limit": MAX_NAME}
+    token = secrets.token_urlsafe(32)
+    with _store.locked():
+        users = _store.load()
+        uid = "u_" + secrets.token_hex(8)
+        while uid in users:
+            uid = "u_" + secrets.token_hex(8)
+        users[uid] = {"id": uid, "name": clean, "token_sha256": _hash(token),
+                      "created_at": datetime.now(timezone.utc).isoformat()}
+        _store.save(users)
+    return {"ok": True, "user": {"id": uid, "name": clean}, "token": token}
 
 
 def user_for_token(token: str | None) -> dict | None:
     """{id, name} for a valid token, else None."""
-    raise NotImplementedError
+    if not isinstance(token, str) or not token:
+        return None
+    want = _hash(token)
+    found = None
+    for u in _store.load().values():  # compare every entry in constant time; no early exit on a match
+        if hmac.compare_digest(str(u.get("token_sha256", "")), want):
+            found = u
+    return _public(found) if found else None
+
+
+def get(user_id: str | None) -> dict | None:
+    """{id, name} of a known user, else None."""
+    u = _store.load().get(user_id) if user_id else None
+    return _public(u) if u else None
+
+
+def bearer(request) -> str | None:
+    """The token in a request's `Authorization: Bearer <token>` header, or None."""
+    header = request.headers.get("authorization") or ""
+    scheme, _, token = header.strip().partition(" ")
+    if scheme.lower() != "bearer":
+        return None
+    return token.strip() or None
 
 
 def current_user(request) -> dict | None:
     """The user behind a FastAPI request's Authorization header, or None."""
-    raise NotImplementedError
+    return user_for_token(bearer(request))
 
 
 def require_user(request) -> dict:
     """current_user(request), or raise HTTPException(401)."""
-    raise NotImplementedError
+    from fastapi import HTTPException
+    user = current_user(request)
+    if not user:
+        raise HTTPException(401, "sign in first: POST /session, then send Authorization: Bearer <token>",
+                            headers={"WWW-Authenticate": "Bearer"})
+    return user
