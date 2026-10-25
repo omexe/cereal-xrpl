@@ -52,6 +52,7 @@ test('folders, moves, rename, archive and restore persist through the cereal ser
   const folder = page.locator('[data-folder-id="Market Research"]');
   const archived = page.locator('.sidebar-section', { has: page.getByRole('heading', { name: 'Archived Wallets' }) });
   const dialog = page.getByRole('dialog');
+  const walletSettings = dialog.locator('.settings-wallet'); // the selected wallet's block inside live Settings
 
   await page.goto('/');
   await page.getByRole('button', { name: '+ 3 more', exact: true }).click();
@@ -85,14 +86,14 @@ test('folders, moves, rename, archive and restore persist through the cereal ser
   // Settings folder select → back to unfiled.
   await folder.locator(row).click();
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await page.getByLabel('Wallet folder').selectOption('');
-  await expect(dialog.getByRole('status')).toHaveText('Moved to Disposable Wallets.');
+  await walletSettings.getByLabel('Wallet folder').selectOption('');
+  await expect(walletSettings.getByRole('status')).toHaveText('Moved to Disposable Wallets.');
   await expect.poll(async () => (await wallet(request, 'd_ws0001')).folder).toBeNull();
 
   // Rename → the sidebar and the detail update.
-  await page.getByLabel('Wallet name').fill('Swell agenda');
-  await page.getByRole('button', { name: 'Save name' }).click();
-  await expect(dialog.getByRole('status')).toHaveText('Name saved.');
+  await walletSettings.getByLabel('Wallet name').fill('Swell agenda');
+  await walletSettings.getByRole('button', { name: 'Save name' }).click();
+  await expect(walletSettings.getByRole('status')).toHaveText('Name saved.');
   await page.getByRole('button', { name: 'Close dialog' }).click();
   await expect(page.locator('.budget-label h1')).toHaveText('Swell agenda');
   await expect(disposable.getByRole('button', { name: 'Open Swell agenda', exact: true })).toBeVisible();
@@ -100,8 +101,8 @@ test('folders, moves, rename, archive and restore persist through the cereal ser
 
   // Archive → it moves to Archived Wallets; its status is unchanged.
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(dialog).toContainText('Archiving hides this wallet. It stays retired; nothing moves on the ledger');
-  await page.getByRole('button', { name: 'Archive selected wallet' }).click();
+  await expect(walletSettings).toContainText('Archiving hides this wallet. It stays retired; nothing moves on the ledger');
+  await walletSettings.getByRole('button', { name: 'Archive selected wallet' }).click();
   await expect(dialog).toHaveCount(0);
   await expect(archived.locator(row)).toBeVisible();
   await expect(disposable.locator(row)).toHaveCount(0);
