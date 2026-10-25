@@ -93,3 +93,14 @@ Refusal codes added: `invalid_url`, `unsafe_url`, `not_accessible`, `site_blocke
 | Vendor A / C | 8000 / 8003 | credentialed | `/swell/<item>` | public sites |
 | Vendor B | 8002 | revoked | | blocked (credential revoked) |
 | any real site, e.g. `https://example.com` | | | | free |
+
+## Verified on XRPL testnet (2026-10-24, in the app on :5180 against the service on :8001)
+
+| Case | What happened | Evidence |
+|---|---|---|
+| Real free site `https://example.com` | probed free, added, opened: 577 bytes read through `safe_get`, shown as text | — |
+| Vendor D (private, honest) | all checks pass except "new address" and "no credential" → private; a 0.15 site wallet (Ledger approved the budget), the 0.10 payment **signed by the owner's Ledger** (`private_site`), report delivered, 0.05 swept home | [payment](https://testnet.xrpl.org/transactions/E5B75C84B8E3D58378635C8913AD7E229AF23713202573832085FD246B0CE96B), [fund](https://testnet.xrpl.org/transactions/B317943DDAAA6A2AF9B05E6E83927AF56AA5EAE001A026D377DD7B6DE66B5917) |
+| Vendor F (payment redirected) | domain proof failed: its toml lists Vendor D, it asks payment to Vendor E's address → blocked before any payment | — |
+| USDC-only paywall | "Can't pay: wants USDC on Base Sepolia (eip155:84532)" → not added | — |
+| Vendor E (takes money, no delivery) | private; Ledger-signed 0.10 settled, the site answered 500 → `paid_not_delivered` event and the site blocked with the evidence; Buy is gone | [payment](https://testnet.xrpl.org/transactions/EE22ED95F1503F16686BAD88B2EBFF88D92BC5B88E51CA10B360425B3D9169A8) |
+| Privacy | a second user sees no sites, gets 404 on another user's site (open, content, buy), and sees none of the site wallets; anonymous `/sites` is 401 | — |
