@@ -244,6 +244,8 @@ export const api = {
   // contract (A01/A02): cereal/routes/runs.py
   startRun: (dep: string, body?: { task: string; request_id: string; keep_open?: boolean }) => post<{ ok: true; run: Run }>(`/subagents/${id(dep)}/run`, body),
   run: (dep: string) => get<{ ok: true; run: Run | null }>(`/subagents/${id(dep)}/run`),
+  // crawl gateway: one x402 payment per page of a free site the wallet named (cereal/routes/runs.py)
+  crawl: (dep: string, body: { pages: string[]; request_id: string }) => post<{ ok: true; run: Run }>(`/subagents/${id(dep)}/crawl`, body),
   // contract (A03): cereal/routes/rules.py
   previewDemoRules: (sentence: string, name: string, current: Constraints) =>
     post<{ ok: boolean; problems: string[]; constraints: Constraints | null }>('/demo/rules/preview', { sentence, name, current }),

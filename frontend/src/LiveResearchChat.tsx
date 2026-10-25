@@ -1,12 +1,13 @@
 /** The chat is a client of Cereal. Wallets, rules, runs, and payment evidence come from the service. */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { ArrowUp, ArrowUpRight, ChevronDown, Clock, Globe01, Menu01, MessageChatCircle, Plus, ShieldTick, Wallet03 } from '@untitledui/icons';
-import { api, ApiError, describeError, type ApiRecord, type Refusal, type Run } from './api';
+import { api, ApiError, describeError, type ApiRecord, type Refusal, type Run, type SiteProbe } from './api';
 import { activityItems, isExpired, nameLookup, planReason } from './activity';
 import { formatAmount } from './format';
 import { toWorkspace } from './live';
 import { resolveWalletFromPrompt } from './researchDemo';
 import { chatRefusal } from './chatOutcome';
+import { crawlPlan, siteInMessage, type CrawlPlan } from './siteCrawl';
 import { useLiveData } from './store';
 
 const SESSION = 'cereal-live-chat-v1';
@@ -15,7 +16,7 @@ const usable = (r: ApiRecord) => r.status === 'active' && !r.archived && !!r.sub
 const running = (run?: Run | null) => run?.status === 'starting' || run?.status === 'running';
 const amount = (value: string | null | undefined) => value == null ? 'Balance unavailable' : formatAmount(value);
 type Attempt = { wallet: string; task: string; request_id: string; runTask?: string };
-type SentTurn = Attempt & { reply?: string; uncertain?: boolean; result?: Run };
+type SentTurn = Attempt & { reply?: string; uncertain?: boolean; result?: Run; crawl?: CrawlPlan; walletName?: string } & CrawlFields;
 type Saved = { wallet?: string; attempt?: Attempt; turns?: SentTurn[] };
 function saved(): Saved { try { return JSON.parse(sessionStorage.getItem(SESSION) ?? '{}'); } catch { return {}; } }
 type RunPlan = { lines?: { item: string; vendor: string; price: string; rejected?: { vendor: string; reason: string }[] }[] };
@@ -27,6 +28,74 @@ function closedWalletMessage(record: ApiRecord): string {
     return `${name} is closed.${returned} It can’t pay for another request. Your results stay in this conversation. Choose or create an active wallet in Cereal, then name it in your next message. New chat requests keep active wallets open until you finish them in Cereal or they expire.`;
   }
   return `${name} is ${record.archived ? 'archived' : isExpired(record.expires_at) ? 'expired' : record.status}. It can’t pay for this request. Choose an active wallet in Cereal and name it in your next message.`;
+}
+
+function siteCheck(probe: SiteProbe): string {
+  if (probe.blocked_by) return `${probe.host} answered with ${probe.blocked_by}'s bot check${probe.archive ? '; reading the Internet Archive copy' : ''}.`;
+  if (probe.kind === 'payable' && probe.payment) return `${probe.host} has an x402 paywall: ${probe.payment.amount} RLUSD per request.`;
+  if (probe.kind === 'free') return `${probe.host} is reachable (HTTP ${probe.status ?? 200})${probe.title ? `: “${probe.title}”` : ''}.`;
+  return `${probe.host}: ${probe.reason ?? probe.kind}.`;
+}
+
+type PaidPage = { url: string; hash?: string; amount?: string };
+type CrawlFields = { crawlCheck?: string; crawlPaid?: PaidPage[]; crawlDone?: boolean; crawlNote?: string; crawlBalance?: string };
+const pageOf = (resource: string) => { try { return new URL(resource).searchParams.get('url') ?? resource; } catch { return resource; } };
+
+/** Probe the site through Cereal, then crawl it: the wallet pays the crawl gateway per page on XRPL testnet and each
+ * page shows its payment as it settles. A finished crawl renders from the saved turn. */
+function SiteCrawl({ turn, onUpdate }: { turn: SentTurn; onUpdate: (fields: CrawlFields) => void }) {
+  const plan = turn.crawl!;
+  const [check, setCheck] = useState(turn.crawlCheck);
+  const [paid, setPaid] = useState<PaidPage[]>(turn.crawlPaid ?? []);
+  const [done, setDone] = useState(!!turn.crawlDone);
+  const [note, setNote] = useState(turn.crawlNote);
+  const [balance, setBalance] = useState(turn.crawlBalance);
+  useEffect(() => {
+    if (turn.crawlDone) return;
+    let stopped = false, timer = 0;
+    const finish = (fields: CrawlFields) => { setDone(true); setNote(fields.crawlNote); onUpdate({ ...fields, crawlDone: true }); };
+    void (async () => {
+      const result = await api.probeSite(plan.url).then(siteCheck, () => `Couldn’t reach Cereal’s site check for ${plan.host}.`);
+      if (stopped) return;
+      setCheck(result);
+      try { await api.crawl(turn.wallet, { pages: plan.pages.map(p => p.url), request_id: turn.request_id }); }
+      catch (err) {
+        if (!stopped) finish({ crawlCheck: result, crawlNote: err instanceof ApiError && err.kind === 'refused' ? chatRefusal(err.body as Refusal) : describeError(err) });
+        return;
+      }
+      const poll = async () => {
+        if (stopped) return;
+        try {
+          const [{ run }, record] = await Promise.all([api.run(turn.wallet), api.wallet(turn.wallet)]);
+          const mine = run?.request_id === turn.request_id ? run : null;
+          const tag = `crawl=${encodeURIComponent(turn.request_id)}`;  // each crawl's gateway URLs carry its request id
+          const got = (record.payments ?? []).filter(p => p.ok === true && p.resource?.includes(tag))
+            .map(p => ({ url: pageOf(p.resource!), hash: p.hash, amount: p.amount }));
+          setPaid(got); setBalance(record.balance ?? undefined);
+          if (mine && !running(mine)) { finish({ crawlCheck: result, crawlPaid: got, crawlBalance: record.balance ?? undefined, crawlNote: mine.error ?? undefined }); return; }
+        } catch { /* a missed poll retries */ }
+        timer = window.setTimeout(poll, 2000);
+      };
+      void poll();
+    })();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const spent = paid.reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
+  const read = plan.pages.filter(page => paid.some(p => p.url === page.url)).length;
+  return <>
+    <p>Using <strong>{turn.walletName || 'your wallet'}</strong> to crawl <strong>{plan.host}</strong> for “{plan.topic}”. Each page is paid to Cereal’s crawl gateway in RLUSD on XRPL testnet; Cereal co-signs every payment.</p>
+    <div className="research-progress"><span><Clock />{!check ? `Querying ${plan.host}…` : done ? `Crawled ${read} of ${plan.pages.length} pages` : `Crawling ${plan.host} · ${read} of ${plan.pages.length} pages paid`}</span>
+      <span>{spent.toFixed(2)} RLUSD spent{balance != null ? ` · ${formatAmount(balance)} left` : ''}</span></div>
+    {check && <p>{check}</p>}
+    {check && <section className="source-results" aria-label="Crawl activity"><h2>Crawl activity</h2>{plan.pages.map(page => {
+      const p = paid.find(x => x.url === page.url);
+      return <article className={`source-result ${p ? 'paid' : done ? 'blocked' : 'pending'}`} key={page.url}><div className="source-icon"><Globe01 /></div><div className="source-body">
+        <div className="source-topline"><strong>{plan.host}{page.path}</strong><span>{p ? `Paid ${p.amount ?? '…'} RLUSD` : done ? 'Not read' : 'Paying…'}</span></div>
+        <p>{page.title}</p>{p?.hash && <a href={`https://testnet.xrpl.org/transactions/${p.hash}`} target="_blank" rel="noopener noreferrer">View transaction <ArrowUpRight /></a>}</div></article>;
+    })}</section>}
+    {note && <p className="chat-error" role="alert">{note}</p>}
+    {done && read > 0 && <section className="research-summary" aria-label="Retrieved data"><h2>{plan.heading}</h2><p className="chat-disclaimer">Sample results. The page reads and payments above are real testnet transactions.</p><ul>{plan.results.map(r => <li key={r.name}><strong>{r.name}</strong>{r.price ? ` · ${r.price}` : ''}: {r.detail}</li>)}</ul></section>}
+  </>;
 }
 
 function PastResult({ run }: { run: Run }) {
@@ -45,7 +114,7 @@ export default function LiveResearchChat() {
   const [selected, setSelected] = useState<string | undefined>(initial.wallet);
   const [attempt, setAttempt] = useState<Attempt | undefined>(initial.attempt);
   const [prompt, setPrompt] = useState(initial.turns?.length ? '' : initial.attempt?.task ?? '');
-  const [turns, setTurns] = useState<SentTurn[]>(() => (initial.turns ?? []).map(turn => turn.reply || turn.result ? turn : { ...turn, uncertain: true, reply: 'The response was interrupted. Check Cereal for the current outcome, or retry this request to check it safely.' }));
+  const [turns, setTurns] = useState<SentTurn[]>(() => (initial.turns ?? []).map(turn => turn.reply || turn.result || turn.crawl ? turn : { ...turn, uncertain: true, reply: 'The response was interrupted. Check Cereal for the current outcome, or retry this request to check it safely.' }));
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState('');
   const [runError, setRunError] = useState('');
@@ -116,6 +185,14 @@ export default function LiveResearchChat() {
       }
       setTurns([...retained.filter(t => t.request_id !== sent.request_id), sent]);
       setPrompt(''); setAttempt(sent); setClarification(undefined);
+      const site = !retry && siteInMessage(task);
+      if (site) {  // a web address runs the crawl directly: no AI call
+        const named = resolveWalletFromPrompt(toWorkspace(wallets, live.vendors, live.folders), task);
+        const wallet = wallets.find(r => r.id === (named.walletId ?? (named.explicit ? undefined : choice ?? selected)));
+        if (!wallet) { update({ reply: named.message, uncertain: false }); return; }
+        update({ wallet: wallet.id, walletName: wallet.name || wallet.task, crawl: crawlPlan(task, site, sent.request_id) });
+        return;
+      }
       if (!retry?.runTask) {
         const history = retained.flatMap(t => [
           { role: 'user' as const, content: t.task },
@@ -176,9 +253,9 @@ export default function LiveResearchChat() {
           <div className="user-message">{turn.task}</div>
           <section className="assistant-message" aria-label="Assistant response">
             <div className="assistant-heading"><span className="assistant-avatar"><MessageChatCircle /></span><strong>ChatGPT</strong></div>
-            {turn.result ? <PastResult run={turn.result} /> : <p role="status">{turn.reply ?? 'I’m checking the available sources and your wallet’s payment rules with Cereal…'}</p>}
-            {turn.wallet && (turn.reply || turn.result) && <a className="chat-new-run" href={walletUrl(turn.wallet)} target="cereal-wallet" rel="noopener">Review wallet in Cereal <ArrowUpRight /></a>}
-            {turn.uncertain && <button className="chat-new-run" disabled={busy} onClick={() => void begin(undefined, turn)}>Retry request</button>}
+            {turn.crawl ? <SiteCrawl turn={turn} onUpdate={fields => setTurns(previous => previous.map(t => t.request_id === turn.request_id ? { ...t, ...fields } : t))} /> : turn.result ? <PastResult run={turn.result} /> : <p role="status">{turn.reply ?? 'I’m checking the available sources and your wallet’s payment rules with Cereal…'}</p>}
+            {turn.wallet && (turn.reply || turn.result || turn.crawlDone) && <a className="chat-new-run" href={walletUrl(turn.wallet)} target="cereal-wallet" rel="noopener">Review wallet in Cereal <ArrowUpRight /></a>}
+            {turn.uncertain && !turn.crawl && <button className="chat-new-run" disabled={busy} onClick={() => void begin(undefined, turn)}>Retry request</button>}
           </section>
         </div>)}</div>}
         {!showRun && !turns.length ? <section className="chat-welcome"><span className="chat-eyebrow">RESEARCH WITH CEREAL</span><h1>Curiosity, with a budget.</h1><p>Name any active Cereal wallet in your prompt.<br />Its existing payment rules apply.</p>

@@ -20,7 +20,7 @@ from xrpl.models.transactions import Payment  # noqa: E402
 from cereal import config  # noqa: E402
 from cereal.ledger import client, job_memo, rlusd, rlusd_balance, sign_submit, stamp  # noqa: E402
 
-VENDORS = ["VENDOR_A", "VENDOR_B", "VENDOR_C", "VENDOR_D", "VENDOR_E"]
+VENDORS = ["VENDOR_A", "VENDOR_B", "VENDOR_C", "VENDOR_D", "VENDOR_E", "VENDOR_G"]
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--below", type=Decimal, default=None, help="only refill when the main wallet holds less than this")

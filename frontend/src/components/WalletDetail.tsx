@@ -245,10 +245,10 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
         Spend up to <button {...rule}>{money(live.budget)}</button> over <button {...rule}>{duration}</button>,{' '}
         {payees.length ? <>only at{' '}{payees.map((payee, index, list) => <span key={`${payee}-${index}`}>
           <button {...rule}>{payee}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : '. '}
-        </span>)}</> : payeesLocked ? <><button {...rule}>pays no vendor</button>. </> : <>at <button {...rule}>any credentialed vendor</button>. </>}
+        </span>)}</> : payeesLocked ? <><button {...rule}>{freeSites.length ? 'pays only the crawl gateway' : 'pays no vendor'}</button>. </> : <>at <button {...rule}>any credentialed vendor</button>. </>}
         {freeSites.length > 0 && <>Reads {freeSites.map((site, index, list) => <span key={site}>
           <button {...rule}>{site}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : ''}
-        </span>)} for free. </>}
+        </span>)}{payees.length || !payeesLocked ? ' for free' : ' through it, page by page'}. </>}
         {live.approval !== null && live.approval !== ''
           ? <>Ask me <button {...rule}>above {money(live.approval)}</button>. </>
           : <><button {...rule}>cereal co-signs every payment</button>. </>}

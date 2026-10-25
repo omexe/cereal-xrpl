@@ -8,6 +8,10 @@ Sites-feature test modes (make vendor-d / vendor-e / vendor-f):
     X402_TOML_ADDRESS=<addr>    the address /.well-known/xrp-ledger.toml lists (default XRPL_PAY_TO; a different one
                                 is the "payment redirected to someone else" scam the probe must block)
     X402_DELIVERY=fail          take the payment, then answer 500 (the delivery check must flag it)
+Crawl gateway mode (make crawl-gateway, :8007):
+    X402_GATEWAY=1              GET /crawl/page?url=<page> is paid per page; after the payment settles the gateway reads
+                                that public page (SSRF-guarded, cereal.sites_probe.safe_get) and returns its title and text.
+                                For sites that take no crypto: the agent pays the gateway, never the site.
 Free pages at /free/<page> and a paywall that only takes USDC on Base Sepolia at /usdc/<item> (cereal can't pay it).
 
 GET /catalog is free: what this vendor sells and at what price (discovery). GET /swell/<item> answers 402 with the
@@ -15,9 +19,11 @@ binding price; the facilitator verifies and submits the presented payment (cerea
 the subagent and cereal). RLUSD is named by its 40-hex code; the facilitator rejects the symbol "RLUSD".
 """
 import os
+import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from x402_xrpl.server import require_payment
 
@@ -31,6 +37,7 @@ ITEMS = dict(x.split(":") for x in os.getenv("X402_ITEMS", "agenda:0.25,speakers
 PREFIX = os.getenv("X402_PREFIX", "swell")
 TOML_ADDRESS = os.getenv("X402_TOML_ADDRESS") or PAY_TO
 DELIVERY = os.getenv("X402_DELIVERY", "ok")
+GATEWAY = os.getenv("X402_GATEWAY") == "1"
 SAMPLE = {  # sample data, not an official agenda; no real people
     "market-data": {
         "sample": True, "title": "Market research brief",
@@ -83,11 +90,33 @@ async def catalog():
             "items": [{"item": i, "path": f"/{PREFIX}/{i}", "price": p} for i, p in ITEMS.items()]}
 
 
+def crawl(url: str) -> dict:
+    """Read one public page for an agent that already paid. The page is untrusted data, returned as plain text."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from cereal.site_access import html_to_text
+    from cereal.sites_probe import UnsafeURL, safe_get
+    try:
+        resp = safe_get(url, headers={"User-Agent": "cereal-crawl-gateway/1.0"}, timeout=20)
+    except UnsafeURL as e:
+        raise HTTPException(400, f"refused: {e}")
+    except Exception as e:  # noqa: BLE001 - the site's failure is reported, not raised
+        return {"title": f"{url} (unreachable)", "summary": f"The gateway could not read this page: {type(e).__name__}.", "findings": []}
+    title, text = html_to_text(resp.content.decode(resp.encoding or "utf-8", errors="replace"))
+    skip = ("skip to", "accessibility", "cookie", "javascript")
+    lines = [line for line in text.split("\n") if len(line) > 30 and not line.lower().startswith(skip)][:5]
+    return {"title": (title or url)[:200], "summary": f"HTTP {resp.status_code} · {len(text)} characters read from {url}",
+            "findings": [line[:300] for line in lines], "page": url}
+
+
 @app.get(f"/{PREFIX}/{{item}}")
-async def resource(item: str):
+async def resource(item: str, url: str | None = Query(default=None)):
     """Paid endpoint (the paywall above answers 402 until a payment settles)."""
     if item not in ITEMS:
         raise HTTPException(404, "not sold here")
+    if GATEWAY:
+        if not url:
+            raise HTTPException(400, "give the page to read: ?url=https://...")
+        return {"vendor": VENDOR, "item": item, "data": crawl(url), "note": "page read by the gateway after an x402 payment"}
     if DELIVERY == "fail":  # test mode: the payment already settled (the middleware settles first); deliver nothing
         raise HTTPException(500, "temporarily unavailable")
     return {"vendor": VENDOR, "item": item, "data": SAMPLE.get(item, {}), "note": "sample data served after an x402 payment"}

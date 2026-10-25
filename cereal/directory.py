@@ -11,7 +11,8 @@ from decimal import Decimal
 from . import config, deployments, vendors
 from .ledger import client
 
-ROLES = ("VENDOR_A", "VENDOR_B", "VENDOR_C")
+ROLES = ("VENDOR_A", "VENDOR_B", "VENDOR_C", "VENDOR_G")
+NAMES = {"VENDOR_G": "Crawl gateway"}
 
 
 def _catalogs() -> list[dict]:
@@ -28,7 +29,7 @@ def list_vendors(c=None) -> list[dict]:
             addr = config.address(role)
         except Exception:
             continue
-        by_addr[addr] = {"name": role.replace("_", " ").title(), "address": addr, "role": role, "url": None, "items": []}
+        by_addr[addr] = {"name": NAMES.get(role) or role.replace("_", " ").title(), "address": addr, "role": role, "url": None, "items": []}
     for cat in cats:
         addr = cat.get("pay_to")
         if not addr:

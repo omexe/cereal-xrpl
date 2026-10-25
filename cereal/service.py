@@ -567,6 +567,32 @@ def _owner_approves_payment(rec: dict, agent_signed: Transaction, amt, threshold
     return {**result, "approved_by": "ledger", "approval": approval, **why}
 
 
+def gateway_page(resource: str | None) -> str | None:
+    """The page a crawl-gateway resource reads ("<gateway>/crawl/page?url=<page>"), or None for any other resource."""
+    from urllib.parse import parse_qs, urlsplit
+    if not resource or not resource.startswith(f"{config.CRAWL_GATEWAY_URL}/crawl/page?"):
+        return None
+    return (parse_qs(urlsplit(resource).query).get("url") or [None])[0]
+
+
+def reads_site(rec: dict, page: str | None) -> bool:
+    """Whether the wallet's sentence named this page's site as a free site (the only sites the gateway may read for it)."""
+    from urllib.parse import urlsplit
+    host = (urlsplit(page or "").hostname or "").removeprefix("www.")
+    return bool(host) and any(s.get("kind") == "free" and (s.get("host") or "").removeprefix("www.") == host
+                              for s in (rec.get("card") or {}).get("sites") or [])
+
+
+def _gateway_read(rec: dict, tx, present: bool, resource: str | None) -> bool:
+    """Sites: a wallet that named a free site may pay the crawl gateway (credentialed VENDOR_G) to read that site's
+    pages, and nothing else. The credential check above still applies to the gateway like any vendor."""
+    try:
+        gateway = config.address("VENDOR_G")
+    except Exception:
+        return False
+    return present and tx.destination == gateway and reads_site(rec, gateway_page(resource))
+
+
 def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, resource: str | None = None) -> dict:
     if not rec or rec["status"] != "active":
         return _refuse("unknown_or_inactive_deployment")
@@ -601,7 +627,8 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
         from . import site_registry
         if site_registry.trust_for(rec["owner"], tx.destination) == "blocked":
             return _refuse("site_blocked", payee=tx.destination)
-    if (rec["allowed_payees"] or rec.get("payees_locked")) and tx.destination not in rec["allowed_payees"]:  # optional narrower filter
+    if (rec["allowed_payees"] or rec.get("payees_locked")) and tx.destination not in rec["allowed_payees"] \
+            and not _gateway_read(rec, tx, present, resource):  # optional narrower filter
         return _refuse("payee_not_allowed", payee=tx.destination, allowed=rec["allowed_payees"])
     amt = tx.amount
     if not isinstance(amt, IssuedCurrencyAmount) or amt.currency != config.RLUSD_CURRENCY:
