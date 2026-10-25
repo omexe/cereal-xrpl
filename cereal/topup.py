@@ -98,12 +98,13 @@ def _requests(dep_id: str) -> dict:
 
 
 def _remember(dep_id: str, rid: str | None, **fields) -> None:
-    """Merge fields into this request's entry. Only called under the main-wallet lock, so entries never race."""
+    """Merge fields into this request's entry, as one locked read-modify-write of the record store (R04)."""
     if not rid:
         return
-    reqs = _requests(dep_id)
-    reqs[rid] = {**reqs.get(rid, {}), **fields}
-    deployments.update(dep_id, fund_requests=reqs)
+    with deployments._lock:
+        reqs = _requests(dep_id)
+        reqs[rid] = {**reqs.get(rid, {}), **fields}
+        deployments.update(dep_id, fund_requests=reqs)
 
 
 def _finish(dep_id: str, rid: str | None, out: dict) -> dict:
@@ -284,18 +285,19 @@ def _approve_raise_send(rec: dict, rid: str | None, amount: str, main_addr: str,
 def _record_success(dep_id: str, rid: str | None, amount: str, new_budget: str, fund_hash: str, tl_hash: str | None,
                     approval: dict, c) -> dict:
     """Record a validated top-up once: settling the same payment again (after a crash mid-record) adds nothing."""
-    rec = deployments.get(dep_id)
-    entry = next((t for t in rec.get("topups") or [] if t.get("hash") == fund_hash), None)
-    if entry is None:
-        entry = {"amount": amount, "hash": fund_hash, "trustline_hash": tl_hash, "at": _now(),
-                 "approval": {"by": approval.get("by"), "result": approval.get("result", "approved"),
-                              "screens": approval.get("screens", [])},
-                 "request_id": rid, "budget_after": new_budget}
-        rec = deployments.update(dep_id, budget=new_budget, topups=[*(rec.get("topups") or []), entry])
-    hashes = rec.get("hashes") or {}
-    if fund_hash not in (hashes.get("topup") or []):
-        rec = deployments.merge_hashes(dep_id, topup=[*(hashes.get("topup") or []), fund_hash],
-                                       topup_trustline=[*(hashes.get("topup_trustline") or []), tl_hash])
+    with deployments._lock:  # one locked read-modify-write of the record store (R04)
+        rec = deployments.get(dep_id)
+        entry = next((t for t in rec.get("topups") or [] if t.get("hash") == fund_hash), None)
+        if entry is None:
+            entry = {"amount": amount, "hash": fund_hash, "trustline_hash": tl_hash, "at": _now(),
+                     "approval": {"by": approval.get("by"), "result": approval.get("result", "approved"),
+                                  "screens": approval.get("screens", [])},
+                     "request_id": rid, "budget_after": new_budget}
+            rec = deployments.update(dep_id, budget=new_budget, topups=[*(rec.get("topups") or []), entry])
+        hashes = rec.get("hashes") or {}
+        if fund_hash not in (hashes.get("topup") or []):
+            rec = deployments.merge_hashes(dep_id, topup=[*(hashes.get("topup") or []), fund_hash],
+                                           topup_trustline=[*(hashes.get("topup_trustline") or []), tl_hash])
     try:
         balance = str(rlusd_balance(c, rec["subwallet"]))
     except Exception:
