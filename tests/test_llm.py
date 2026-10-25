@@ -81,6 +81,16 @@ def test_tool_loop_runs_tools_and_returns_the_final_text(keys):
     assert tool_msg["role"] == "tool" and tool_msg["tool_call_id"] == "c1" and json.loads(tool_msg["content"]) == {"left": "0.5"}
 
 
+def test_a_terminal_tool_ends_the_loop_without_another_model_call(keys):
+    seq = [msg(None, [{"id": "c1", "type": "function", "function": {"name": "done", "arguments": '{"summary": "ok"}'}}])]
+    sent = []
+    keys.setattr(llm.requests, "post", lambda url, json=None, **k: sent.append(json) or seq.pop(0))
+    closed = []
+    out = llm.run_tool_loop("sys", "go", {"done": ({"type": "object"}, lambda summary: closed.append(summary) or {"ok": True})},
+                            terminal={"done"})
+    assert out == "done" and closed == ["ok"] and len(sent) == 1  # no closing message was requested of the model
+
+
 def test_a_provider_error_after_a_tool_ran_is_never_retried_elsewhere(keys):
     keys.setenv("ANTHROPIC_API_KEY", "x")
     seq = [msg(None, [{"id": "c1", "type": "function", "function": {"name": "pay", "arguments": '{"amount": "0.25"}'}}]),

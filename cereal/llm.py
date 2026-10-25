@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 import requests
 
@@ -104,7 +104,7 @@ def _or_extract(system: str, user: str, schema: dict, name: str, timeout: float 
     return _json_from((data.get("choices") or [{}])[0].get("message", {}).get("content") or "")
 
 
-def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, state: dict) -> str:
+def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, state: dict, terminal=()) -> str:
     spec = [{"type": "function", "function": {"name": n, "description": (fn.__doc__ or n).strip().split("\n")[0],
                                               "parameters": schema}} for n, (schema, fn) in tools.items()]
     messages: list[dict] = [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -119,6 +119,7 @@ def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, stat
         messages.append(turn)
         if not calls:
             return msg.get("content") or ""
+        ended = False
         for call in calls:
             name = call.get("function", {}).get("name")
             try:
@@ -127,6 +128,9 @@ def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, stat
                 args = {}
             out = _run_tool(tools, name, args, on_event, state)
             messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": json.dumps(out, default=str)})
+            ended = ended or name in terminal
+        if ended:  # the task's closing tool ran: nothing more is asked of the model
+            return "done"
     return "max turns reached"
 
 
@@ -155,7 +159,7 @@ def _anthropic_extract(system: str, user: str, schema: dict, name: str, timeout:
     return _json_from(next((b.text for b in resp.content if getattr(b, "type", "") == "text"), ""))
 
 
-def _anthropic_loop(system: str, user: str, tools: dict, max_turns: int, on_event, state: dict) -> str:
+def _anthropic_loop(system: str, user: str, tools: dict, max_turns: int, on_event, state: dict, terminal=()) -> str:
     spec = [{"name": n, "description": (fn.__doc__ or n).strip().split("\n")[0], "input_schema": schema}
             for n, (schema, fn) in tools.items()]
     messages: list[dict] = [{"role": "user", "content": user}]
@@ -168,11 +172,15 @@ def _anthropic_loop(system: str, user: str, tools: dict, max_turns: int, on_even
         if resp.stop_reason != "tool_use":
             return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
         results = []
+        ended = False
         for block in resp.content:
             if getattr(block, "type", "") == "tool_use":
                 out = _run_tool(tools, block.name, block.input or {}, on_event, state)
                 results.append({"type": "tool_result", "tool_use_id": block.id, "content": json.dumps(out, default=str)})
+                ended = ended or block.name in terminal
         messages.append({"role": "user", "content": results})
+        if ended:  # the task's closing tool ran: nothing more is asked of the model
+            return "done"
     return "max turns reached"
 
 
@@ -222,15 +230,21 @@ def extract(system: str, user: str, schema: dict, name: str, *, timeout: float |
 
 
 def run_tool_loop(system: str, user: str, tools: dict[str, tuple[dict, Callable[..., Any]]],
-                  max_turns: int = 12, on_event: Callable[[str, Any], None] | None = None) -> str:
+                  max_turns: int = 12, on_event: Callable[[str, Any], None] | None = None,
+                  terminal: Iterable[str] = ()) -> str:
     """tools: name -> (input JSON schema, python function(**input)). Returns the final text. Falls back to the next
-    provider only if the first failed before running any tool (tools can pay; a payment must never be repeated)."""
+    provider only if the first failed before running any tool (tools can pay; a payment must never be repeated).
+    terminal: tools that close the task (a subagent's done()). Once one has run, the loop returns "done" at once
+    instead of asking the model for a closing message nobody reads: that extra call held a paid-up run (and its
+    wallet) for up to three 90-second attempts."""
     global served_by, last_error
     last_error = None
+    terminal = frozenset(terminal)
     for p in providers():
         state: dict = {}
         try:
-            text = (_or_loop if p == "openrouter" else _anthropic_loop)(system, user, tools, max_turns, on_event, state)
+            text = (_or_loop if p == "openrouter" else _anthropic_loop)(system, user, tools, max_turns, on_event, state,
+                                                                        terminal)
             served_by = OPENROUTER_MODEL if p == "openrouter" else MODEL
             return text
         except Exception as e:

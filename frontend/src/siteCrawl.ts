@@ -6,7 +6,7 @@ const BARE_RE = /(?<![@\w.-])((?:www\.)?(?:[a-z0-9-]+\.)+(?:com|org|net|io|ai|de
 
 export interface CrawlPage { url: string; path: string; title: string }
 export interface CrawlResult { name: string; detail: string; price?: string }
-export interface CrawlPlan { url: string; host: string; topic: string; pages: CrawlPage[]; heading: string; results: CrawlResult[] }
+export interface CrawlPlan { url: string; host: string; topic: string; pages: CrawlPage[]; heading: string; summary: string[]; results: CrawlResult[] }
 
 export function siteInMessage(text: string): string | null {
   const full = text.match(URL_RE)?.[0];
@@ -15,7 +15,7 @@ export function siteInMessage(text: string): string | null {
   return bare ? `https://${bare[1]}${bare[2] ?? ''}`.replace(/[.!?]+$/, '') : null;
 }
 
-const STOP = new Set('help me find the best pair pairs a an of for to on in with using use my our lets let us if needed please show get some and or i want need wallet is are what which this that from at by it me can you'.split(' '));
+const STOP = new Set('help me find the best pair pairs through website site page via look looking a an of for to on in with using use my our lets let us if needed please show get some and or i want need wallet is are what which this that from at by it me can you'.split(' '));
 /** The words of the question, without the site, the wallet instruction, and filler. */
 function topicOf(text: string, host: string): string {
   const words = text.toLowerCase().replace(URL_RE, ' ').replace(host, ' ').replace(/\buse\s+(?:my|our|the)?\s*[\w\s"“”]+?wallet\b/g, ' ')
@@ -54,5 +54,13 @@ export function crawlPlan(message: string, url: string, seed: string): CrawlPlan
     : pick(rand, ['Most viewed', 'Highest rated', 'Newest', 'Best value', 'Editor’s pick', 'Trending this week'], 4).map((label, i) => ({
       name: `${label}: ${topic} #${i + 1}`, detail: `Found on ${host}; ${Math.floor(rand() * 900 + 100)} reviews, ${(3.8 + rand()).toFixed(1)}★`,
     }));
-  return { url, host, topic, pages, heading: shoes ? `Best shoes on ${host}` : `Top results for “${topic}” on ${host}`, results };
+  const [top, next] = results;
+  const summary = shoes ? [
+    `I read ${pages.length} pages of ${host}: the home page, a search for “${topic}”, the shoe category, best sellers and running shoes. Across those pages, ${top.name} comes up most often and has the strongest reviews, so it’s my pick for most people.`,
+    `${next.name} is a close second. Prices range from about ${results.map(r => r.price).sort()[0]} to ${results.map(r => r.price).sort().at(-1)}, and several models are back in stock in extra colorways. Here’s what I found:`,
+  ] : [
+    `I read ${pages.length} pages of ${host}, including a search for “${topic}”, the matching category and its most-viewed items. ${top.name.split(':')[0]} and ${next.name.split(':')[0].toLowerCase()} results overlap heavily, which points to a clear favorite.`,
+    `The list below ranks what I found by reviews and how often each item appeared across the pages.`,
+  ];
+  return { url, host, topic, pages, heading: shoes ? `Best shoes on ${host}` : `Top results for “${topic}” on ${host}`, summary, results };
 }

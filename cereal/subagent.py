@@ -339,7 +339,7 @@ def main() -> None:
     if llm.available():
         system, tools = llm_brief(s, a, rec, vendors, amount)
         try:
-            llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=_emit_tool)
+            llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=_emit_tool, terminal={"done"})  # done() ends it
         except llm.NoModel as e:
             emit("model_unavailable", {"reason": str(e), "fallback": "deterministic plan"})
             _deterministic(s, a, vendors, amount)

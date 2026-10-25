@@ -159,3 +159,30 @@
   .source-topline { flex-wrap: wrap; gap: 4px; }
   .chat-approval { padding: 18px; }
 }
+
+/* The crawl's one payment (LiveResearchChat CrawlTransaction): triggered → complete, or failed. */
+.crawl-check { color: var(--color-chat-secondary); font: var(--font-ui); margin-top: 16px; }
+.crawl-tx { display: flex; gap: 16px; align-items: flex-start; margin-top: 18px; padding: 20px; border: 1px solid var(--color-chat-border); border-radius: 12px; background: var(--color-chat-raised); transition: border-color 300ms ease; }
+.crawl-tx.triggered { border-color: var(--color-chat-warning); }
+.crawl-tx.complete { border-color: var(--color-chat-success); }
+.crawl-tx.failed { border-color: var(--color-chat-danger); }
+.crawl-tx-status { display: grid; place-items: center; width: 36px; height: 36px; flex-shrink: 0; }
+.crawl-tx-status svg { width: 30px; height: 30px; }
+.crawl-tx.complete .crawl-tx-status { color: var(--color-chat-success); animation: crawl-tx-pop 280ms ease-out; }
+.crawl-tx.failed .crawl-tx-status { color: var(--color-chat-danger); }
+.crawl-tx-spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--color-chat-border); border-top-color: var(--color-chat-warning); animation: crawl-tx-spin 800ms linear infinite; }
+.crawl-tx.waiting .crawl-tx-spinner { border-top-color: var(--color-chat-muted); }
+.crawl-tx-body { flex: 1; min-width: 0; }
+.crawl-tx-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.crawl-tx-top strong { font: var(--font-control); color: var(--color-chat-text); }
+.crawl-tx-amount { font: var(--font-control); color: var(--color-chat-text); white-space: nowrap; }
+.crawl-tx-body > p { font: var(--font-ui); color: var(--color-chat-secondary); margin-top: 6px; }
+.crawl-tx-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin-top: 12px; font: var(--font-caption); color: var(--color-chat-muted); }
+.crawl-tx-meta a { display: inline-flex; align-items: center; gap: 4px; color: var(--color-chat-text); }
+.crawl-tx-meta svg { width: var(--icon-inline); height: var(--icon-inline); }
+.crawl-tx-balance { display: block; margin-top: 8px; font: var(--font-caption); color: var(--color-chat-muted); }
+@keyframes crawl-tx-spin { to { transform: rotate(360deg); } }
+@keyframes crawl-tx-pop { from { transform: scale(0.6); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .crawl-tx-spinner { animation-duration: 2.4s; } .crawl-tx.complete .crawl-tx-status { animation: none; } }
+.research-summary > p + p { margin-top: 12px; }
+.research-summary ul { display: flex; flex-direction: column; gap: 8px; margin: 16px 0 12px; padding-left: 20px; font: var(--font-body); color: var(--color-chat-text); }

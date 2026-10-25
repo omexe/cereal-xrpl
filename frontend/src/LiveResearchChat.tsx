@@ -1,6 +1,6 @@
 /** The chat is a client of Cereal. Wallets, rules, runs, and payment evidence come from the service. */
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { ArrowUp, ArrowUpRight, ChevronDown, Clock, Globe01, Menu01, MessageChatCircle, Plus, ShieldTick, Wallet03 } from '@untitledui/icons';
+import { AlertCircle, ArrowUp, ArrowUpRight, CheckCircle, ChevronDown, Clock, Globe01, Menu01, MessageChatCircle, Plus, ShieldTick, Wallet03 } from '@untitledui/icons';
 import { api, ApiError, describeError, type ApiRecord, type Refusal, type Run, type SiteProbe } from './api';
 import { activityItems, isExpired, nameLookup, planReason } from './activity';
 import { formatAmount } from './format';
@@ -37,8 +37,34 @@ function siteCheck(probe: SiteProbe): string {
   return `${probe.host}: ${probe.reason ?? probe.kind}.`;
 }
 
+/** The crawl's one payment: triggered (spinner while the agent and Cereal sign and the ledger validates), complete
+ * (validated, with its explorer link), or failed (the run ended without a validated payment). */
+function CrawlTransaction({ state, host, pages, wallet, amount, hash, balance }: { state: 'waiting' | 'triggered' | 'complete' | 'failed';
+  host: string; pages: number; wallet?: string; amount?: string; hash?: string; balance?: string }) {
+  const title = state === 'complete' ? 'Transaction complete' : state === 'failed' ? 'Transaction not completed'
+    : state === 'waiting' ? 'Transaction queued' : 'Transaction triggered';
+  return <article className={`crawl-tx ${state}`} aria-live="polite">
+    <div className="crawl-tx-status">{state === 'complete' ? <CheckCircle /> : state === 'failed' ? <AlertCircle /> : <span className="crawl-tx-spinner" role="img" aria-label="Processing" />}</div>
+    <div className="crawl-tx-body">
+      <div className="crawl-tx-top"><strong>{title}</strong><span className="crawl-tx-amount">{amount ? formatAmount(amount) : '0.02 RLUSD'}</span></div>
+      <p>{wallet || 'Your wallet'} → Crawl gateway · {pages} pages of {host}</p>
+      <div className="crawl-tx-meta">
+        <span>{state === 'complete' ? 'Validated on XRPL testnet · signed by the agent and Cereal'
+          : state === 'failed' ? 'No payment was validated'
+          : state === 'waiting' ? `${wallet || 'This wallet'} is finishing its previous crawl; this one pays as soon as the wallet is free.`
+          : 'Signing with the agent and Cereal, then validating on XRPL testnet…'}</span>
+        {hash && <a href={`https://testnet.xrpl.org/transactions/${hash}`} target="_blank" rel="noopener noreferrer">{hash.slice(0, 8)}…{hash.slice(-6)} <ArrowUpRight /></a>}
+      </div>
+      {state === 'complete' && balance != null && <span className="crawl-tx-balance">{formatAmount(balance)} left in {wallet || 'the wallet'}</span>}
+    </div>
+  </article>;
+}
+
 type PaidPage = { url: string; hash?: string; amount?: string };
-type CrawlFields = { crawlCheck?: string; crawlPaid?: PaidPage[]; crawlDone?: boolean; crawlNote?: string; crawlBalance?: string };
+/** The run this turn started and shows: `run` is its id, `tag` the `crawl=` marker its gateway URLs carry. Saved on
+ * the turn so a reload follows the same run and never starts (and pays for) a second crawl. */
+type CrawlFollow = { run: string; tag: string };
+type CrawlFields = { crawlCheck?: string; crawlPaid?: PaidPage[]; crawlDone?: boolean; crawlNote?: string; crawlBalance?: string; crawlFollow?: CrawlFollow };
 const pageOf = (resource: string) => { try { return new URL(resource).searchParams.get('url') ?? resource; } catch { return resource; } };
 
 /** Probe the site through Cereal, then crawl it: the wallet pays the crawl gateway per page on XRPL testnet and each
@@ -50,6 +76,7 @@ function SiteCrawl({ turn, onUpdate }: { turn: SentTurn; onUpdate: (fields: Craw
   const [done, setDone] = useState(!!turn.crawlDone);
   const [note, setNote] = useState(turn.crawlNote);
   const [balance, setBalance] = useState(turn.crawlBalance);
+  const [waiting, setWaiting] = useState(false);
   useEffect(() => {
     if (turn.crawlDone) return;
     let stopped = false, timer = 0;
@@ -58,21 +85,35 @@ function SiteCrawl({ turn, onUpdate }: { turn: SentTurn; onUpdate: (fields: Craw
       const result = await api.probeSite(plan.url).then(siteCheck, () => `Couldn’t reach Cereal’s site check for ${plan.host}.`);
       if (stopped) return;
       setCheck(result);
-      try { await api.crawl(turn.wallet, { pages: plan.pages.map(p => p.url), request_id: turn.request_id }); }
-      catch (err) {
-        if (!stopped) finish({ crawlCheck: result, crawlNote: err instanceof ApiError && err.kind === 'refused' ? chatRefusal(err.body as Refusal) : describeError(err) });
-        return;
+      // A reloaded turn keeps following the run it already started: it never starts (and pays for) a second crawl.
+      let follow = turn.crawlFollow;
+      // A wallet runs one task at a time: while its previous crawl is still finishing, this one queues (up to
+      // 3 minutes) and then pays on its own, so every message gets its own transaction.
+      for (let attempt = 0; !follow; attempt++) {
+        try {
+          const { run } = await api.crawl(turn.wallet, { pages: plan.pages.map(p => p.url), request_id: turn.request_id });
+          follow = { run: run.id, tag: `crawl=${encodeURIComponent(turn.request_id)}` };  // each crawl's gateway URLs carry its request id
+        } catch (err) {
+          const refusal = err instanceof ApiError && err.kind === 'refused' ? err.body as Refusal : null;
+          if (refusal?.refused === 'already_running' && attempt < 60 && !stopped) { setWaiting(true); await new Promise(r => setTimeout(r, 3000)); continue; }
+          if (!stopped) finish({ crawlCheck: result, crawlNote: refusal ? chatRefusal(refusal) : describeError(err) });
+          return;
+        }
       }
+      if (stopped || !follow) return;
+      setWaiting(false);
+      const followed = follow;
+      onUpdate({ crawlCheck: result, crawlFollow: followed });
       const poll = async () => {
         if (stopped) return;
         try {
           const [{ run }, record] = await Promise.all([api.run(turn.wallet), api.wallet(turn.wallet)]);
-          const mine = run?.request_id === turn.request_id ? run : null;
-          const tag = `crawl=${encodeURIComponent(turn.request_id)}`;  // each crawl's gateway URLs carry its request id
-          const got = (record.payments ?? []).filter(p => p.ok === true && p.resource?.includes(tag))
+          const mine = run?.id === followed.run ? run : null;
+          const got = (record.payments ?? []).filter(p => p.ok === true && p.resource?.includes(followed.tag))
             .map(p => ({ url: pageOf(p.resource!), hash: p.hash, amount: p.amount }));
           setPaid(got); setBalance(record.balance ?? undefined);
-          if (mine && !running(mine)) { finish({ crawlCheck: result, crawlPaid: got, crawlBalance: record.balance ?? undefined, crawlNote: mine.error ?? undefined }); return; }
+          // Over once the followed run has ended, or once the wallet has moved on to another run.
+          if (mine ? !running(mine) : !!run) { finish({ crawlCheck: result, crawlPaid: got, crawlBalance: record.balance ?? undefined, crawlNote: mine?.error ?? undefined }); return; }
         } catch { /* a missed poll retries */ }
         timer = window.setTimeout(poll, 2000);
       };
@@ -80,23 +121,14 @@ function SiteCrawl({ turn, onUpdate }: { turn: SentTurn; onUpdate: (fields: Craw
     })();
     return () => { stopped = true; clearTimeout(timer); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const spent = paid.reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
   const payment = paid[0];  // one gateway payment covers the whole crawl
-  const read = payment ? plan.pages.length : 0;
   return <>
     <p>Using <strong>{turn.walletName || 'your wallet'}</strong> to crawl <strong>{plan.host}</strong> for “{plan.topic}”. The crawl is one RLUSD payment to Cereal’s crawl gateway on XRPL testnet, co-signed by Cereal.</p>
-    <div className="research-progress"><span><Clock />{!check ? `Querying ${plan.host}…` : done ? `Crawled ${read} of ${plan.pages.length} pages` : payment ? `Crawled ${plan.pages.length} pages · finishing` : `Crawling ${plan.host} · paying for ${plan.pages.length} pages`}</span>
-      <span>{spent.toFixed(2)} RLUSD spent{balance != null ? ` · ${formatAmount(balance)} left` : ''}</span></div>
-    {check && <p>{check}</p>}
-    {check && <section className="source-results" aria-label="Crawl activity"><h2>Crawl activity</h2>
-      <article className={`source-result ${payment ? 'paid' : done ? 'blocked' : 'pending'}`}><div className="source-icon"><Wallet03 /></div><div className="source-body">
-        <div className="source-topline"><strong>Crawl gateway</strong><span>{payment ? `Paid ${payment.amount ?? '…'} RLUSD` : done ? 'Not paid' : 'Paying…'}</span></div>
-        <p>One payment for {plan.pages.length} pages of {plan.host}</p>{payment?.hash && <a href={`https://testnet.xrpl.org/transactions/${payment.hash}`} target="_blank" rel="noopener noreferrer">View transaction <ArrowUpRight /></a>}</div></article>
-      {plan.pages.map(page => <article className={`source-result ${payment ? 'paid' : done ? 'blocked' : 'pending'}`} key={page.url}><div className="source-icon"><Globe01 /></div><div className="source-body">
-        <div className="source-topline"><strong>{plan.host}{page.path}</strong><span>{payment ? 'Read' : done ? 'Not read' : 'Waiting'}</span></div><p>{page.title}</p></div></article>)}
-    </section>}
+    <p className="crawl-check">{check ?? `Querying ${plan.host}…`}</p>
+    {check && <CrawlTransaction state={payment ? 'complete' : done ? 'failed' : waiting ? 'waiting' : 'triggered'} host={plan.host} pages={plan.pages.length}
+      wallet={turn.walletName} amount={payment?.amount} hash={payment?.hash} balance={balance} />}
     {note && <p className="chat-error" role="alert">{note}</p>}
-    {done && read > 0 && <section className="research-summary" aria-label="Retrieved data"><h2>{plan.heading}</h2><p className="chat-disclaimer">Sample results. The page reads and payments above are real testnet transactions.</p><ul>{plan.results.map(r => <li key={r.name}><strong>{r.name}</strong>{r.price ? ` · ${r.price}` : ''}: {r.detail}</li>)}</ul></section>}
+    {payment && <section className="research-summary" aria-label="Research"><h2>{plan.heading}</h2>{plan.summary?.map((text, i) => <p key={i}>{text}</p>)}<ul>{plan.results.map(r => <li key={r.name}><strong>{r.name}</strong>{r.price ? ` · ${r.price}` : ''}: {r.detail}</li>)}</ul><p className="chat-disclaimer">Sample research text. The page reads and the payment above are real.</p></section>}
   </>;
 }
 
@@ -189,8 +221,12 @@ export default function LiveResearchChat() {
       setPrompt(''); setAttempt(sent); setClarification(undefined);
       const site = !retry && siteInMessage(task);
       if (site) {  // a web address runs the crawl directly: no AI call
-        const named = resolveWalletFromPrompt(toWorkspace(wallets, live.vendors, live.folders), task);
-        const wallet = wallets.find(r => r.id === (named.walletId ?? (named.explicit ? undefined : choice ?? selected)));
+        const pick = (list: ApiRecord[]) => {
+          const named = resolveWalletFromPrompt(toWorkspace(list, live.vendors, live.folders), task);
+          return { named, wallet: list.find(r => r.id === (named.walletId ?? (named.explicit ? undefined : choice ?? selected))) };
+        };
+        let { named, wallet } = pick(wallets);
+        if (!wallet) ({ named, wallet } = pick((await api.wallets()).filter(usable)));  // the list may not have loaded yet
         if (!wallet) { update({ reply: named.message, uncertain: false }); return; }
         update({ wallet: wallet.id, walletName: wallet.name || wallet.task, crawl: crawlPlan(task, site, sent.request_id) });
         return;
