@@ -179,8 +179,11 @@ def _settle_interrupted(dep_id: str, rid: str, prev: dict, c) -> dict:
 # ---- the top-up -----------------------------------------------------------------------------
 
 def fund(dep_id: str, amount: str, request_id: str | None = None, speculos_decision: str | None = None) -> dict | None:
-    """Top up an active wallet by `amount` RLUSD with the owner's Ledger approval. None if the wallet is unknown."""
-    from . import service
+    """Top up an active wallet by `amount` RLUSD with the owner's Ledger approval. None if the wallet is unknown.
+
+    Holds the main-wallet lock (the treasury's sequence) and the wallet's rules lock (cereal/rules.py: a spend-limit
+    change reads and rewrites the same budget), so neither can compute against a budget the other is changing."""
+    from . import rules, service
     amount = normalized(amount)
     # Every top-up gets an id, so even a caller that sent none can be settled from the ledger after a crash.
     rid = (request_id or "").strip()[:100] or f"srv-{uuid.uuid4().hex}"
@@ -197,7 +200,7 @@ def fund(dep_id: str, amount: str, request_id: str | None = None, speculos_decis
         if not config.DEVICE_FUNDING:
             return _device_required()
     c = client()
-    with service._main_wallet:
+    with service._main_wallet, rules._wallet_lock(dep_id):  # rules never takes the main-wallet lock: no lock cycle
         out = replay(dep_id, rid, amount, c, settle=True)
         if out:
             return out

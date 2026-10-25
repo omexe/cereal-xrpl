@@ -89,6 +89,7 @@ test.describe.serial('Add funds on testnet', () => {
     await expect(page.locator('#status-message')).toContainText('https://testnet.xrpl.org/transactions/');
     await expect(page.locator('.budget-used')).toContainText('/ 0.75 RLUSD');
     await expect(page.locator('.constraints')).toContainText('Spend up to 0.75 RLUSD');
+    await expect(page.locator('[data-figure="available"] dd')).toHaveText('0.75 RLUSD'); // read from the ledger
 
     const rec = await wallet();
     expect(rec.budget).toBe('0.75');

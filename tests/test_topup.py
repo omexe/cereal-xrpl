@@ -209,6 +209,18 @@ def test_owner_rejection_sends_nothing_and_is_in_the_security_log(led):
     assert ev["by"] == "owner" and ev["code"] == "owner_rejected" and ev["outcome"] == "nothing sent"
 
 
+def test_a_rules_change_waits_while_the_owner_decides(led, monkeypatch):
+    from cereal import rules
+    rec = _wallet()
+    held = []
+    sign_ = device.sign
+    monkeypatch.setattr(device, "sign", lambda tx, decision=None: held.append(rules._wallet_lock(rec["id"]).locked())
+                        or sign_(tx, decision))
+    topup.fund(rec["id"], "0.25")
+    assert held == [True], "a spend-limit edit cannot rewrite the budget mid top-up"
+    assert not rules._wallet_lock(rec["id"]).locked()
+
+
 def test_manual_mode_ignores_the_api_button(led, monkeypatch):
     monkeypatch.setattr(config, "DEVICE_DECISION", "manual")
     rec = _wallet()
