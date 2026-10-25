@@ -567,12 +567,12 @@ def _owner_approves_payment(rec: dict, agent_signed: Transaction, amt, threshold
     return {**result, "approved_by": "ledger", "approval": approval, **why}
 
 
-def gateway_page(resource: str | None) -> str | None:
-    """The page a crawl-gateway resource reads ("<gateway>/crawl/page?url=<page>"), or None for any other resource."""
+def gateway_pages(resource: str | None) -> list[str]:
+    """The pages a crawl-gateway resource reads ("<gateway>/crawl/page?url=<page>&url=<page>…"); [] for any other."""
     from urllib.parse import parse_qs, urlsplit
     if not resource or not resource.startswith(f"{config.CRAWL_GATEWAY_URL}/crawl/page?"):
-        return None
-    return (parse_qs(urlsplit(resource).query).get("url") or [None])[0]
+        return []
+    return parse_qs(urlsplit(resource).query).get("url") or []
 
 
 def reads_site(rec: dict, page: str | None) -> bool:
@@ -585,12 +585,14 @@ def reads_site(rec: dict, page: str | None) -> bool:
 
 def _gateway_read(rec: dict, tx, present: bool, resource: str | None) -> bool:
     """Sites: a wallet that named a free site may pay the crawl gateway (credentialed VENDOR_G) to read that site's
-    pages, and nothing else. The credential check above still applies to the gateway like any vendor."""
+    pages (one payment per crawl, every page on such a site), and nothing else. The credential check above still applies
+    to the gateway like any vendor."""
     try:
         gateway = config.address("VENDOR_G")
     except Exception:
         return False
-    return present and tx.destination == gateway and reads_site(rec, gateway_page(resource))
+    pages = gateway_pages(resource)
+    return present and tx.destination == gateway and bool(pages) and all(reads_site(rec, p) for p in pages)
 
 
 def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, resource: str | None = None) -> dict:

@@ -9,8 +9,8 @@ Sites-feature test modes (make vendor-d / vendor-e / vendor-f):
                                 is the "payment redirected to someone else" scam the probe must block)
     X402_DELIVERY=fail          take the payment, then answer 500 (the delivery check must flag it)
 Crawl gateway mode (make crawl-gateway, :8007):
-    X402_GATEWAY=1              GET /crawl/page?url=<page> is paid per page; after the payment settles the gateway reads
-                                that public page (SSRF-guarded, cereal.sites_probe.safe_get) and returns its title and text.
+    X402_GATEWAY=1              GET /crawl/page?url=<page>&url=<page>… is one payment per crawl (up to 6 pages); after
+                                it settles the gateway reads those public pages (SSRF-guarded, cereal.sites_probe.safe_get) and returns its title and text.
                                 For sites that take no crypto: the agent pays the gateway, never the site.
 Free pages at /free/<page> and a paywall that only takes USDC on Base Sepolia at /usdc/<item> (cereal can't pay it).
 
@@ -109,14 +109,17 @@ def crawl(url: str) -> dict:
 
 
 @app.get(f"/{PREFIX}/{{item}}")
-async def resource(item: str, url: str | None = Query(default=None)):
+async def resource(item: str, url: list[str] = Query(default=[])):
     """Paid endpoint (the paywall above answers 402 until a payment settles)."""
     if item not in ITEMS:
         raise HTTPException(404, "not sold here")
     if GATEWAY:
-        if not url:
-            raise HTTPException(400, "give the page to read: ?url=https://...")
-        return {"vendor": VENDOR, "item": item, "data": crawl(url), "note": "page read by the gateway after an x402 payment"}
+        if not 1 <= len(url) <= 6:
+            raise HTTPException(400, "give 1 to 6 pages to read: ?url=https://...&url=https://...")
+        pages = [crawl(u) for u in url]  # one payment, every page read
+        data = {"title": pages[0]["title"], "summary": f"{len(pages)} pages read in one crawl: " + "; ".join(p["summary"] for p in pages),
+                "findings": [f"{p['page']}: {p['title']}" for p in pages], "pages": pages}
+        return {"vendor": VENDOR, "item": item, "data": data, "note": "pages read by the gateway after one x402 payment"}
     if DELIVERY == "fail":  # test mode: the payment already settled (the middleware settles first); deliver nothing
         raise HTTPException(500, "temporarily unavailable")
     return {"vendor": VENDOR, "item": item, "data": SAMPLE.get(item, {}), "note": "sample data served after an x402 payment"}

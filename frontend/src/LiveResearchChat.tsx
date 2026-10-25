@@ -81,18 +81,20 @@ function SiteCrawl({ turn, onUpdate }: { turn: SentTurn; onUpdate: (fields: Craw
     return () => { stopped = true; clearTimeout(timer); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const spent = paid.reduce((sum, p) => sum + Number(p.amount ?? 0), 0);
-  const read = plan.pages.filter(page => paid.some(p => p.url === page.url)).length;
+  const payment = paid[0];  // one gateway payment covers the whole crawl
+  const read = payment ? plan.pages.length : 0;
   return <>
-    <p>Using <strong>{turn.walletName || 'your wallet'}</strong> to crawl <strong>{plan.host}</strong> for “{plan.topic}”. Each page is paid to Cereal’s crawl gateway in RLUSD on XRPL testnet; Cereal co-signs every payment.</p>
-    <div className="research-progress"><span><Clock />{!check ? `Querying ${plan.host}…` : done ? `Crawled ${read} of ${plan.pages.length} pages` : `Crawling ${plan.host} · ${read} of ${plan.pages.length} pages paid`}</span>
+    <p>Using <strong>{turn.walletName || 'your wallet'}</strong> to crawl <strong>{plan.host}</strong> for “{plan.topic}”. The crawl is one RLUSD payment to Cereal’s crawl gateway on XRPL testnet, co-signed by Cereal.</p>
+    <div className="research-progress"><span><Clock />{!check ? `Querying ${plan.host}…` : done ? `Crawled ${read} of ${plan.pages.length} pages` : payment ? `Crawled ${plan.pages.length} pages · finishing` : `Crawling ${plan.host} · paying for ${plan.pages.length} pages`}</span>
       <span>{spent.toFixed(2)} RLUSD spent{balance != null ? ` · ${formatAmount(balance)} left` : ''}</span></div>
     {check && <p>{check}</p>}
-    {check && <section className="source-results" aria-label="Crawl activity"><h2>Crawl activity</h2>{plan.pages.map(page => {
-      const p = paid.find(x => x.url === page.url);
-      return <article className={`source-result ${p ? 'paid' : done ? 'blocked' : 'pending'}`} key={page.url}><div className="source-icon"><Globe01 /></div><div className="source-body">
-        <div className="source-topline"><strong>{plan.host}{page.path}</strong><span>{p ? `Paid ${p.amount ?? '…'} RLUSD` : done ? 'Not read' : 'Paying…'}</span></div>
-        <p>{page.title}</p>{p?.hash && <a href={`https://testnet.xrpl.org/transactions/${p.hash}`} target="_blank" rel="noopener noreferrer">View transaction <ArrowUpRight /></a>}</div></article>;
-    })}</section>}
+    {check && <section className="source-results" aria-label="Crawl activity"><h2>Crawl activity</h2>
+      <article className={`source-result ${payment ? 'paid' : done ? 'blocked' : 'pending'}`}><div className="source-icon"><Wallet03 /></div><div className="source-body">
+        <div className="source-topline"><strong>Crawl gateway</strong><span>{payment ? `Paid ${payment.amount ?? '…'} RLUSD` : done ? 'Not paid' : 'Paying…'}</span></div>
+        <p>One payment for {plan.pages.length} pages of {plan.host}</p>{payment?.hash && <a href={`https://testnet.xrpl.org/transactions/${payment.hash}`} target="_blank" rel="noopener noreferrer">View transaction <ArrowUpRight /></a>}</div></article>
+      {plan.pages.map(page => <article className={`source-result ${payment ? 'paid' : done ? 'blocked' : 'pending'}`} key={page.url}><div className="source-icon"><Globe01 /></div><div className="source-body">
+        <div className="source-topline"><strong>{plan.host}{page.path}</strong><span>{payment ? 'Read' : done ? 'Not read' : 'Waiting'}</span></div><p>{page.title}</p></div></article>)}
+    </section>}
     {note && <p className="chat-error" role="alert">{note}</p>}
     {done && read > 0 && <section className="research-summary" aria-label="Retrieved data"><h2>{plan.heading}</h2><p className="chat-disclaimer">Sample results. The page reads and payments above are real testnet transactions.</p><ul>{plan.results.map(r => <li key={r.name}><strong>{r.name}</strong>{r.price ? ` · ${r.price}` : ''}: {r.detail}</li>)}</ul></section>}
   </>;
