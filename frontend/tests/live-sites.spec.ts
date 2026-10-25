@@ -15,6 +15,7 @@ const E_URL = 'http://localhost:8005/research/report';
 const F_URL = 'http://localhost:8006/research/report';
 const USDC_URL = 'http://localhost:8004/usdc/report';
 const FREE_URL = 'https://example.com';
+const USDC_REASON = 'This paywall only takes USDC on Base Sepolia (eip155:84532); cereal pays RLUSD on XRPL testnet (xrpl:1).';
 const TOKEN = 'tok_test_123';
 const USER = { id: 'u_test', name: 'Ana' };
 const PAID_HASH = 'A1B2C3D4E5F60718293A4B5C6D7E8F90A1B2C3D4E5F60718293A4B5C6D7E8F90';
@@ -52,8 +53,8 @@ const PROBES: Record<string, Json> = {
       check('domain_proof', false, `localhost’s xrp-ledger.toml lists ${VENDOR_D}, not the payee ${VENDOR_E}`)],
     verdict: 'block', verdict_reasons: ['The site asks you to pay an address its own xrp-ledger.toml does not list.'], trust_hint: 'blocked' },
   [USDC_URL]: { ...base(USDC_URL), kind: 'unpayable', status: 402,
-    accepts: [{ network: 'eip155:84532', asset: USDC_BASE_SEPOLIA, amount: '100000' }],
-    reason: 'It only takes USDC on Base Sepolia.', verdict: 'block', trust_hint: 'none' },
+    accepts: [{ network: 'eip155:84532', asset: USDC_BASE_SEPOLIA, amount: '100000', scheme: 'exact', label: 'USDC on Base Sepolia (eip155:84532)' }],
+    reason: USDC_REASON, verdict: 'block', verdict_reasons: [USDC_REASON], trust_hint: 'none' },
   [FREE_URL]: { ...base(FREE_URL), kind: 'free', status: 200, title: 'Example Domain', verdict: 'ok', trust_hint: 'free' },
 };
 
@@ -302,10 +303,11 @@ test('a USDC-only paywall is refused with what it wants', async ({ page }) => {
   const dialog = await checkSite(page, USDC_URL);
   const card = dialog.getByRole('region', { name: 'Site check' });
   await expect(card.locator('.site-kind')).toHaveText('Can’t pay: wants USDC on Base Sepolia');
-  await expect(card).toContainText('It only takes USDC on Base Sepolia.');
+  await expect(card.locator('.site-reason')).toHaveText(USDC_REASON);
+  await expect(card.locator('.site-verdict, .site-checks')).toHaveCount(0);
   await expect(card.locator('.site-trust')).toHaveText('Can’t be added');
   await dialog.getByRole('button', { name: 'Add to my sites' }).click();
-  await expect(dialog.getByRole('alert')).toHaveText('An agent cannot use this site: It only takes USDC on Base Sepolia.');
+  await expect(dialog.getByRole('alert')).toHaveText(`An agent cannot use this site: ${USDC_REASON}`);
   expect(service.sites).toHaveLength(0);
   await expect(sitesSection(page).getByRole('button', { name: 'Add your first site' })).toBeVisible();
   expect(errors).toEqual([]);

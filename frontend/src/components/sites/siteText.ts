@@ -67,9 +67,11 @@ function assetName(asset?: string, network?: string): string {
 }
 const networkName = (network?: string) => network ? NETWORKS[network] ?? network : 'an unnamed network';
 
-/** What the site wants, from its 402 options: "USDC on Base Sepolia or XRP on XRPL testnet". */
+/** What the site wants, from its 402 options: "USDC on Base Sepolia or XRP on XRPL testnet". The probe labels each
+ * option ("USDC on Base Sepolia (eip155:84532)"); the network id in brackets is left to the reason line. */
 export function wants(probe: Pick<SiteProbe, 'accepts'>): string | null {
-  const options = [...new Set((probe.accepts ?? []).map(a => `${assetName(a.asset, a.network)} on ${networkName(a.network)}`))];
+  const options = [...new Set((probe.accepts ?? []).map((a: { network?: string; asset?: string; label?: unknown }) =>
+    typeof a.label === 'string' && a.label ? a.label.replace(/\s*\([^()]*\)$/, '') : `${assetName(a.asset, a.network)} on ${networkName(a.network)}`))];
   return options.length ? options.join(' or ') : null;
 }
 

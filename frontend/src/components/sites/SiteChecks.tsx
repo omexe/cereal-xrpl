@@ -40,7 +40,8 @@ export function CheckList({ checks }: { checks: SiteCheck[] }) {
 export function ProbeFindings({ probe }: { probe: Probed }) {
   const credential = probe.kind === 'payable' ? credentialText(probe.credential) : null;
   const reason = extraReason(probe);
-  const showVerdict = probe.checks.length > 0 || probe.verdict_reasons.length > 0;
+  // A site cereal can neither read nor pay has no checks: its reason says why, and the trust note says it can't be added.
+  const showVerdict = probe.kind === 'payable' && (probe.checks.length > 0 || probe.verdict_reasons.length > 0);
   return <>
     <p className="site-kind" data-kind={probe.kind}>{kindText(probe)}</p>
     {reason && <p className="site-reason">{reason}</p>}
