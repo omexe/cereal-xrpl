@@ -306,24 +306,32 @@ def start(dep_id: str) -> dict:
         plan, specs, refused = _plan(rec, envelope)
         if refused:
             return refused
-        rec = deployments.get(dep_id)  # planning took a while: the wallet may have been reclaimed or swept meanwhile
-        refused = _startable(rec)
-        if refused:
-            return refused
-        return _launch(rec, plan, specs)
+        run_id = "r_" + uuid.uuid4().hex[:8]
+        # Check and reserve in one step under the store's lock (machine-wide when the store's lock is), so two
+        # services sharing a record file cannot both start this wallet. Planning above stays outside the lock.
+        # Lock order: runs.py never takes service._main_wallet, so it can never wait on it while holding this one.
+        with deployments._lock:
+            rec = deployments.get(dep_id)  # planning took a while: the wallet may have been reclaimed meanwhile
+            refused = _startable(rec)
+            if refused:
+                return refused
+            live = rec.get("run") or {}
+            if live.get("status") in LIVE:
+                return _refuse("already_running", run=live)
+            started_at = _now()
+            run = {"id": run_id, "deployment": dep_id, "status": "starting", "started_at": started_at,
+                   "finished_at": None, "exit_code": None, "pid": None, "log": str(runs_dir() / f"{run_id}.log"),
+                   "plan": plan, "summary": None, "error": None}
+            with _owned_lock:
+                _owned.add(run_id)
+            deployments.update(dep_id, run=run)
+        return _launch(rec, run, specs)
 
 
-def _launch(rec: dict, plan: dict, specs: list[str]) -> dict:
-    dep_id = rec["id"]
-    run_id = "r_" + uuid.uuid4().hex[:8]
-    started_at = _now()
-    log_path = runs_dir() / f"{run_id}.log"
-    run = {"id": run_id, "deployment": dep_id, "status": "starting", "started_at": started_at,
-           "finished_at": None, "exit_code": None, "pid": None, "log": str(log_path), "plan": plan,
-           "summary": None, "error": None}
-    with _owned_lock:
-        _owned.add(run_id)
-    deployments.update(dep_id, run=run)
+def _launch(rec: dict, run: dict, specs: list[str]) -> dict:
+    """Start the subagent for a reserved run (status starting, owned by this process) and its watcher."""
+    dep_id, run_id, started_at, plan = rec["id"], run["id"], run["started_at"], run["plan"]
+    log_path = Path(run["log"])
     task = f"{rec.get('name') or rec['task']}: buy {' + '.join(plan['items'])}"
     cmd = [sys.executable, "-m", "cereal.subagent", dep_id, task] + [x for sp in specs for x in ("--buy", sp)]
     env = {**os.environ, "CEREAL_SERVICE_URL": config.SERVICE_URL}  # the subagent talks to this service

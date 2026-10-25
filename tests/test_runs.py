@@ -316,3 +316,17 @@ def test_an_orphan_that_reported_done_before_it_exited_succeeded(env):
     env["mp"].setattr(runs, "_alive", lambda pid, d: False)
     run = runs.current(dep)["run"]
     assert run["status"] == "succeeded" and run["summary"] == "bought 1 of 1" and "exit code not seen" in run["note"]
+
+
+def test_a_run_another_service_reserved_while_this_one_planned_is_not_doubled(env):
+    dep = wallet()
+    from cereal import pricing
+    real = pricing.plan
+    def plan_while_another_service_starts(*a, **k):
+        out = real(*a, **k)
+        deployments.update(dep, run={"id": "r_elsewhere", "deployment": dep, "status": "starting", "pid": None,
+                                     "started_at": datetime.now(timezone.utc).isoformat()})
+        return out
+    env["mp"].setattr(pricing, "plan", plan_while_another_service_starts)
+    out = runs.start(dep)
+    assert out["refused"] == "already_running" and out["run"]["id"] == "r_elsewhere" and env["procs"] == []
