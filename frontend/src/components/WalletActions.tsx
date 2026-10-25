@@ -70,6 +70,8 @@ function refusalText(r: RecordRefusal): string {
 
 /** Why a wallet never became active, from its Ledger approval or what was sent. */
 function whyNotActive(rec: ApiRecord): string {
+  const refused = (rec.create_refusal as { refused?: string } | undefined)?.refused;  // kept by POST /wallets (R03)
+  if (refused) return REFUSAL_TEXT[refused] ?? `Refused: ${refused.replace(/_/g, ' ')}.`;
   const approval = rec.approval?.result;
   if (rec.status === 'rejected') return REFUSAL_TEXT[approval ?? 'owner_rejected'] ?? REFUSAL_TEXT.owner_rejected;
   if (approval && approval !== 'approved') return REFUSAL_TEXT[approval] ?? `The Ledger did not approve: ${approval.replace(/_/g, ' ')}. Nothing was sent.`;
