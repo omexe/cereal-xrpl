@@ -1,5 +1,5 @@
 PY=.venv/bin/python
-.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 shop vendor-test rails vendor-b vendor-c ap4m-merchant retire export ledger-check
+.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 shop vendor-test rails vendor-b vendor-c vendor-d vendor-e vendor-f refill ap4m-merchant retire export ledger-check
 setup:        ## venv + deps
 	python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 pool:         ## create/load roles → .env (run early: burners must age 256 ledgers)
@@ -45,3 +45,13 @@ retire:       ## retire reclaimed or recovered subwallets (demo + test stores) o
 	@for f in deployments.json deployments.testnet.json deployments.testnet2.json deployments.testnet3.json deployments.testnet4.json deployments.testnet5.json; do \
 	  [ -f $$f ] && echo "== $$f" && CEREAL_DEPLOYMENTS_FILE=$$f .venv/bin/python -m cereal.main_agent --retire-all; \
 	done; true
+
+vendor-d:     ## Sites: Vendor D on :8004, honest x402 RLUSD site NOT credentialed by cereal (report 0.10); free pages, a USDC-only paywall
+	X402_VENDOR="Vendor D" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_D"))') X402_ITEMS="report:0.10" X402_PREFIX=research X402_PORT=8004 $(PY) x402/server.py
+vendor-e:     ## Sites: Vendor E on :8005, takes the payment and never delivers (report 0.10)
+	X402_VENDOR="Vendor E" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_E"))') X402_ITEMS="report:0.10" X402_PREFIX=research X402_DELIVERY=fail X402_PORT=8005 $(PY) x402/server.py
+vendor-f:     ## Sites: Vendor F on :8006, pays Vendor E but its xrp-ledger.toml lists Vendor D (payment redirected: blocked)
+	X402_VENDOR="Vendor F" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_E"))') X402_TOML_ADDRESS=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_D"))') X402_ITEMS="report:0.10" X402_PREFIX=research X402_PORT=8006 $(PY) x402/server.py
+
+refill:       ## demo plumbing (testnet): move our own vendors' RLUSD earnings back to the main wallet
+	$(PY) scripts/refill_treasury.py

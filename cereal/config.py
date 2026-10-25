@@ -63,3 +63,11 @@ def wallet(role: str) -> Wallet:
 
 def address(role: str) -> str:
     return os.getenv(f"{role}_ADDRESS") or wallet(role).classic_address
+
+# Sites: URLs a user gives cereal (docs/SITES.md). The probe and the free-page reader never fetch private addresses
+# (loopback, LAN, link-local, metadata) except these origins, the local test merchants.
+SITE_ALLOW_ORIGINS = [o.strip().rstrip("/") for o in os.getenv(
+    "CEREAL_SITE_ALLOW_ORIGINS",
+    ",".join(f"http://{h}:{p}" for h in ("localhost", "127.0.0.1") for p in (8000, 8002, 8003, 8004, 8005, 8006)),
+).split(",") if o.strip()]
+SITE_PRICE_CAP = os.getenv("CEREAL_SITE_PRICE_CAP", "1")  # RLUSD: the most one site purchase may cost

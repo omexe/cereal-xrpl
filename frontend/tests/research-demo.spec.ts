@@ -14,6 +14,8 @@ async function createResearch(page: Page, budget = '20', sweep = false) {
   }, { budget, sweep });
   await page.goto('/?wallet=existing-wallet');
   await expect(page.locator('.activity-illustration')).toBeVisible();
+  // The transaction list starts collapsed; it opens on its own only when a payment waits for the owner.
+  await page.getByRole('button', { name: 'Transactions', exact: true }).click();
   await expect(page.getByText('Existing research purchase', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Open demo chat' })).toHaveCount(0);
   return '/demo-chat';
@@ -162,6 +164,8 @@ test('demo tools live only in settings; legacy research wallets retain the stand
   });
   await page.reload();
   await expect(page.locator('.activity-illustration')).toBeVisible();
+  // The transaction list starts collapsed; it opens on its own only when a payment waits for the owner.
+  await page.getByRole('button', { name: 'Transactions', exact: true }).click();
   await expect(page.getByText('Existing research purchase', { exact: true })).toBeVisible();
   await expect(page.getByText('Demo activity', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Research demo', exact: true })).toHaveCount(0);
@@ -172,7 +176,11 @@ test('demo tools live only in settings; legacy research wallets retain the stand
   await expect(page.getByRole('heading', { name: 'Developer tools' })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Open demo chat' })).toHaveAttribute('href', '/demo-chat');
   await page.getByRole('button', { name: 'Close dialog' }).click();
-  await page.getByRole('button', { name: 'New Wallet', exact: true }).click();
+  // Wallets are created from the Home composer (there is no New Wallet item); it offers no research-demo option either.
+  await expect(page.getByRole('button', { name: 'New Wallet', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Home', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Describe a new wallet in plain English' }).fill('A wallet called Scratch with $5 over 1 day, only at Apollo');
+  await expect(page.locator('.forming')).toBeVisible();
   await expect(page.getByLabel('Use for the research chat demo')).toHaveCount(0);
   await page.goto('/?setup=research');
   await expect(page.getByRole('dialog', { name: 'Workspace settings' })).toBeVisible();

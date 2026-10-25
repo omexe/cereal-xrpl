@@ -50,6 +50,7 @@ async function openWallet(page: Page, id: string) {
   if (!await row.isVisible()) await page.locator('.wallet-more').click();
   await row.click();
   await expect(page.locator('.wallet-detail.is-live')).toBeVisible();
+  await page.getByRole('button', { name: 'Transactions', exact: true }).click();
 }
 
 test('a retired wallet shows settled spending, Ledger approval, plan evidence and its on-ledger lifecycle', async ({ page, request }) => {

@@ -3,12 +3,19 @@
  */
 export const SIZE = 727;
 export const CORE = { x: 313, y: 328, radius: 97 };
+/** Selecting this id highlights the aggregate core instead of a wallet sphere. */
+export const CORE_ID = 'total-wallet';
+export interface View { x: number; y: number; width: number; height: number }
+/** The wallet page's crop, matching its 356 × 406 frame. Every sphere is placed inside it. */
+export const VIEW: View = { x: 108, y: 94.5, width: 420, height: 479 };
+/** Home's crop, matching its 640 × 620 frame; it contains VIEW, so every sphere shows on both pages. */
+export const HOME_VIEW: View = { x: 78, y: 101.5, width: 480, height: 465 };
 const TAU = Math.PI * 2;
-const DURATION = 320;
+export const DURATION = 320;
 const clamp = (n: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, n));
 const mix = (a: number, b: number, t: number) => a + (b - a) * t;
 interface Sphere { id: string; x: number; y: number; radius: number; blue: number }
-type Position = Pick<Sphere, 'x' | 'y' | 'radius'>;
+export type Position = Pick<Sphere, 'x' | 'y' | 'radius'>;
 // The reference's airy, asymmetric orbit, ordered with the initial wallet at lower right.
 const referencePositions: Position[] = [
   { x: 455, y: 447, radius: 60 },
@@ -24,10 +31,26 @@ const referencePositions: Position[] = [
   { x: 289, y: 122, radius: 14 },
   { x: 220, y: 547, radius: 13 },
 ];
-const dots = Array.from({ length: 160 * 185 }, (_, index) => {
+/** The shared dot lattice, in SIZE coordinates. */
+export const dots = Array.from({ length: 160 * 185 }, (_, index) => {
   const row = Math.floor(index / 160), col = index % 160;
   return { x: col * 4.6 + (row % 2) * 2.3, y: row * 4.6 * Math.sqrt(3) / 2 };
 });
+
+/** Where the next wallet's sphere goes, given those already placed (in order): the reference orbit first, then the
+ * largest free space inside VIEW. Home's forming sphere uses it, so a new wallet appears where it was forming. */
+export function placeSphere(placed: Position[]): Position {
+  if (placed.length < referencePositions.length) return referencePositions[placed.length];
+  const occupied = [CORE, ...placed];
+  let best = { x: 0, y: 0, radius: 0 };
+  for (let y = VIEW.y + 40; y <= VIEW.y + VIEW.height - 40; y += 16) {
+    for (let x = VIEW.x + 40; x <= VIEW.x + VIEW.width - 40; x += 16) {
+      const radius = Math.min(32, ...occupied.map(sphere => Math.hypot(x - sphere.x, y - sphere.y) - sphere.radius - 18));
+      if (radius > best.radius) best = { x, y, radius };
+    }
+  }
+  return best;
+}
 
 export function createWalletSpheres(canvas: HTMLCanvasElement, svg: SVGSVGElement) {
   const context = canvas.getContext('2d');
@@ -53,8 +76,7 @@ export function createWalletSpheres(canvas: HTMLCanvasElement, svg: SVGSVGElemen
     ctx.clearRect(0, 0, SIZE, SIZE);
     const paths = palette.map(() => new Path2D());
     let dotCount = 0;
-    const spheres = [{ ...CORE, blue: 0 }, ...current];
-    for (const sphere of spheres) {
+    for (const sphere of current) {
       if (sphere.radius < .1) continue;
       const path = paths[Math.round(sphere.blue * (palette.length - 1))];
       for (const dot of dots) {
@@ -88,19 +110,7 @@ export function createWalletSpheres(canvas: HTMLCanvasElement, svg: SVGSVGElemen
   function tucked(sphere: Sphere): Sphere {
     return { ...sphere, radius: 0 };
   }
-  function nextPosition(): Position {
-    if (positions.size < referencePositions.length) return referencePositions[positions.size];
-    // Additional wallets occupy the largest free space while preserving existing positions.
-    const occupied = [CORE, ...positions.values()];
-    let best = { x: 0, y: 0, radius: 0 };
-    for (let y = 80; y <= SIZE - 80; y += 16) {
-      for (let x = 80; x <= SIZE - 80; x += 16) {
-        const radius = Math.min(32, ...occupied.map(sphere => Math.hypot(x - sphere.x, y - sphere.y) - sphere.radius - 18));
-        if (radius > best.radius) best = { x, y, radius };
-      }
-    }
-    return best;
-  }
+  const nextPosition = () => placeSphere([...positions.values()]);
   function settle() {
     cancelAnimationFrame(frame);
     current = targets;
@@ -113,7 +123,8 @@ export function createWalletSpheres(canvas: HTMLCanvasElement, svg: SVGSVGElemen
     for (const id of ids) {
       if (!positions.has(id)) positions.set(id, nextPosition());
     }
-    targets = ids.map(id => ({ id, ...positions.get(id)!, blue: id === selected ? 1 : 0 }));
+    // The core is always present, so it only ever animates its color.
+    targets = [{ id: CORE_ID, ...CORE, blue: selected === CORE_ID ? 1 : 0 }, ...ids.map(id => ({ id, ...positions.get(id)!, blue: id === selected ? 1 : 0 }))];
     hitTargets = new Map(Array.from(svg.querySelectorAll<SVGGElement>('.wallet-cluster')).map(group => [group.dataset.walletId!, group.querySelector<SVGCircleElement>('circle')!]));
     if (!initialized || reducedMotion.matches) { initialized = true; settle(); return; }
     const from = new Map(current.map(sphere => [sphere.id, sphere])), to = new Map(targets.map(sphere => [sphere.id, sphere]));

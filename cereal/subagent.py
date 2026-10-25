@@ -135,10 +135,12 @@ def _validated(c, tx_hash: str, wait_s: int = 30) -> str | None:
 
 
 def _body(resp):
+    """A response's JSON, else its text: a delivered (2xx) body is kept whole enough for the run log's bound (one
+    character over it, so the log can say it was cut); an error page keeps 500 characters."""
     try:
         return resp.json()
     except ValueError:
-        return resp.text[:500]
+        return resp.text[:MAX_EMITTED_DATA + 1 if resp.ok else 500]
 
 
 def report(dep_id: str, kind: str, result: dict, detail: dict | None = None) -> None:
@@ -192,6 +194,45 @@ def hijack(s: Subagent) -> None:
     report(s.dep_id, "hijack_alone", alone, {"attacker": attacker})
 
 
+MAX_EMITTED_DATA = 100_000  # characters of a delivered resource kept in the run log (sites read it back as content)
+
+
+def _bounded_data(data) -> dict:
+    """The delivered resource for the run log, so cereal can show what a purchase delivered (it is data, never
+    instructions). A body over the bound keeps the first MAX_EMITTED_DATA characters of its text (a JSON body: of its
+    serialization), and `data_truncated` says so."""
+    if data is None:
+        return {"data": None}
+    text = data if isinstance(data, str) else json.dumps(data, default=str)
+    if len(text) <= MAX_EMITTED_DATA:
+        return {"data": data}
+    return {"data": text[:MAX_EMITTED_DATA], "data_truncated": True, "data_chars": len(text)}
+
+
+MODEL_TEXT_CHARS = 500  # what the model sees of a delivered text body (as before the run log kept more)
+
+
+def _logged_buy(s: "Subagent"):
+    """Model mode's buy tool. A paid delivery goes to the run log, bounded, as a `delivered` event (cereal shows it to
+    the owner); the model gets the same result with a text body cut to MODEL_TEXT_CHARS, as it always did."""
+    def buy(url: str, max_rlusd: str | None = None) -> dict:
+        r = s.buy(url, max_rlusd=max_rlusd)
+        if r.get("ok") and r.get("hash"):
+            emit("delivered", {"resource": url, "hash": r["hash"], "price": r.get("price"),
+                               **_bounded_data(r.get("data"))})
+        if isinstance(r.get("data"), str):
+            r = {**r, "data": r["data"][:MODEL_TEXT_CHARS]}
+        return r
+    return buy
+
+
+def _emit_tool(name: str, out) -> None:
+    """Model mode: log each tool result like plan mode does, with a delivered resource bounded the same way."""
+    if name == "buy" and isinstance(out, dict) and "data" in out:
+        out = {**{k: v for k, v in out.items() if k != "data"}, **_bounded_data(out["data"])}
+    emit(name, out)
+
+
 def _deterministic(s: "Subagent", a, vendors: list[str], amount: str) -> None:
     """The plan a subagent runs without a model (or when the model is unavailable): buy what it was told to, in order,
     at most the listed price, falling back to the next listed vendor if one is refused."""
@@ -204,6 +245,7 @@ def _deterministic(s: "Subagent", a, vendors: list[str], amount: str) -> None:
                 r = s.buy(url, max_rlusd=str(limit))
                 emit("refused" if r.get("refused") else "buy", {"resource": url, "limit": str(limit),
                                                                 **{k: v for k, v in r.items() if k != "data"},
+                                                                **_bounded_data(r.get("data")),
                                                                 "data_keys": sorted((r.get("data") or {}).keys())
                                                                 if isinstance(r.get("data"), dict) else None})
                 if r.get("ok"):
@@ -231,7 +273,7 @@ def llm_brief(s: "Subagent", a: argparse.Namespace, rec: dict, vendors: list[str
     tools = {
         "budget_left": ({"type": "object", "properties": {}}, s.budget_left),
         "buy": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
-                 "required": ["url"]}, s.buy),
+                 "required": ["url"]}, _logged_buy(s)),
         "buy_ap4m": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
                       "required": ["url"]}, s.buy_ap4m),
         "done": ({"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}, s.done),
@@ -289,7 +331,7 @@ def main() -> None:
     if llm.available():
         system, tools = llm_brief(s, a, rec, vendors, amount)
         try:
-            llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)
+            llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=_emit_tool)
         except llm.NoModel as e:
             emit("model_unavailable", {"reason": str(e), "fallback": "deterministic plan"})
             _deterministic(s, a, vendors, amount)

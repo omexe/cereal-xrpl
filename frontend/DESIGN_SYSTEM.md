@@ -52,6 +52,12 @@
 - Short desktop windows use tighter spacing and a smaller graphic; they do not invent another type scale.
 - Overflowing content must remain reachable without covering the question input.
 
+## Motion
+
+- Page changes (sidebar, sphere map, brand, Home, a newly created wallet) are view transitions through `navigate` in `App.tsx`: the old page fades out (`--motion-fade-out`, .2s), then the new page fades in (`--motion-fade-in`, .3s, starting after `--motion-fade-delay`, .14s). Nothing slides. The sidebar and composer crossfade in place. The sphere map is its own layer, so between wallets it holds steady; it fades with the page when coming from or going to Home. Clicks pass through while a transition runs.
+- Dialogs and the mobile drawer fade in with `--motion-fade-in`; closing is immediate.
+- `prefers-reduced-motion: reduce` removes every animation and transition, and `navigate` skips the view transition. Browsers without view transitions change pages instantly.
+
 ## Agentation
 
 Agentation mounts at the React root only when `import.meta.env.DEV` is true. The endpoint is `http://localhost:4747`, matching the existing local MCP server. Open its bottom-right toolbar to annotate the UI, then ask the agent to read your feedback. It is a desktop development tool and is excluded from production.
@@ -69,14 +75,25 @@ Agentation mounts at the React root only when `import.meta.env.DEV` is true. The
 
 - Home uses the Overview role (`--font-overview`, Aspekta 500, 72px / 1.05, tracking -2.16px; 40px on mobile) for the total balance and Composer (`--font-composer`, 18px / 1.5, 500; Body on mobile) for wallet creation.
 - Active wallet markers on Home use `--color-marker-active` (#4ac900), matching frame `21:1489`; archived markers retain their neutral token.
-- Home uses the original `45:303` illustration at its 640 × 620 aspect ratio. It is decorative; wallet detail uses the original activity illustration described below.
+- Home shows the same interactive sphere map as wallet detail (described below), in a 640 × 620 frame matching `45:303` (`HOME_VIEW`). On Home the core is the selected sphere; every other sphere opens its wallet.
 - The home summary sits above the illustration, with no budget chart or selected-wallet constraints. The composer remains at the viewport bottom, without a decorative caret.
+
+## Forming a new wallet
+
+- There is no New Wallet navigation item: a wallet is written in the Home composer. Typing on Home turns the workspace (everything right of the sidebar, composer included) to `--color-forming-surface` and shows the wallet forming (`FormingWallet`); clearing the text, Cancel or Escape returns to Home. Both directions are view transitions: the page fades, and the sphere map glides from Home's position to the left as it recolors.
+- Colors come only from the `--color-forming-*` tokens: on-accent text, a muted on-accent for hints and the composer placeholder, a translucent on-accent border, and `--color-forming-sphere` (lavender) for other wallets, with the core in `--color-forming-particle` (white).
+- The new wallet's sphere forms where the wallet will land (`placeSphere`): sparse lattice dots that hover and twinkle, drawn larger while forming and denser as the sentence names the wallet, budget, duration and vendors. Reduced motion draws it still.
+- The right column reads the sentence back as it is typed (`lib/draftWallet.ts`): Cancel and Create wallet (Control), the budget in Overview, a Caption with the name and funding source, and the rules in Rules type with a blinking caret. The rules update clause by clause exactly as typed, with no defaults or placeholders. Until the sentence states a budget, a time limit and vendors, a muted Caption lists what is still needed and Create is disabled. A wallet that never mentions sweeping sweeps back (cereal's default), and one that never mentions approval is never asked about.
+- Mock: Create wallet (or Enter) creates the demo wallet from the draft, funded with its budget, and opens it. Live: it opens the New wallet dialog with the sentence, where cereal reads it and the owner approves on the Ledger; the blue view is a draft.
 
 ## Wallet activity
 
-- Frame `27:2273` replaces the earlier balance-and-spheres detail layout. Rules span the content width above a two-column illustration and transaction history.
-- Rules use `--font-rules` (Aspekta 500, 36px / 1.15, tracking -.54px; 24px / 1.3 on mobile). Transaction titles use `--font-transaction` (Aspekta 500, 16px / 1.3); mobile uses Body.
-- The 356 × 406 illustration from `27:2389` is displayed at its original aspect ratio. It is decorative and is not a count of active wallets.
+- Frame `27:2273` replaces the earlier balance-and-spheres detail layout. Rules span the content width above a two-column transaction history and illustration. The wallet description and a "Spending rules" heading are not shown; an archived wallet shows an "Archived wallet" label instead.
+- Transactions sit left of the illustration and start collapsed to a "Transactions" toggle (Control, with an inline chevron) and its summary caption. Collapsed, the illustration is centered in the content width, above the composer. Opening the list gives it a 320px left column and recenters the illustration in the remaining width, shifting it right; each wallet opens collapsed. Opening and closing animate together (.32s): the list column and gap grow while the illustration glides, the list's height and opacity ease in or out, and the chevron rotates. Reduced-motion users get the end state with no transition.
+- The rules sentence omits "Ask me above" when the threshold is at or above the spend limit, since it can never trigger.
+- Rules use `--font-rules` (Aspekta 500, 36px / 1.15, tracking -.54px; 24px / 1.3 on mobile). Transaction cards are compact: titles use Control (13px / 500) on every viewport and amounts use UI. `--font-transaction` is no longer used by wallet activity.
+- The illustration is the data-driven sphere map (`WalletOrganism`), cropped to the 356 × 406 frame of `27:2389` (`VIEW` in `lib/walletSpheres.ts`; new spheres are placed inside it). The large core is the total wallet; each other sphere is one active wallet, with the open wallet in `--color-organism-selected`.
+- It is navigation, an alternative to the sidebar: clicking or pressing Enter on a sphere moves the highlight to it (320ms), then opens that wallet; the core highlights, then goes Home. The graphic stays mounted across wallets so the highlight glides rather than jumps. Only the spheres take pointer events, and the frame uses `overflow: clip` so focusing a sphere never scrolls it.
 - Merchant colors reuse the three chart tokens consistently in the bar, legend, and transaction labels. Bar widths derive from each merchant's transaction total divided by the greater of the spending limit or total spending.
 - The transaction list has a bounded desktop scroll area and expands on mobile. The transaction section is labelled Activity; simulation details live in Settings.
 - The wallet composer uses the shared Composer role and keeps the previously removed decorative caret absent.

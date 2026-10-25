@@ -1,4 +1,5 @@
 import type { SetStateAction } from 'react';
+import type { Session } from './session';
 import type { LiveData } from './store';
 import type { Wallet, Workspace } from './wallets';
 
@@ -24,4 +25,10 @@ export interface AppActions {
   /** Status line under the content; error=true keeps it visible and styles it as an alert. */
   notify: (message: string, error?: boolean) => void;
   close: () => void;
+  /** Sites (docs/SITES.md): the signed-in user, if any, and the site views. */
+  session: Session | null;
+  setSession: (session: Session | null) => void;
+  selectedSiteId?: string;
+  openSite: (siteId: string) => void;
+  openAddSite: (url?: string) => void;
 }

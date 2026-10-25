@@ -26,6 +26,9 @@ Rules
   settled resource again; unresolved earlier payments block repetition. Reusing a request ID never pays twice.
 - Refusals send nothing and record no run: not_active, expired, already_running, balance_unavailable (the ledger
   could not be read), nothing_to_buy, already_bought, no_trusted_vendor, over_budget (the quotes exceed the balance).
+- Explicit specs (`start(id, specs=["url@max"])`, used by site purchases): the plan is exactly those URLs, with no
+  catalog planning; the same guards apply (a URL this wallet already paid for is never planned again), plus
+  invalid_spec for anything that is not one http(s) URL with a positive max.
 
 Cleanup policy for interrupted runs (A02)
 - A run this service did not start in its own lifetime (the service restarted or crashed while it was live) is
@@ -284,6 +287,47 @@ def _plan(rec: dict, envelope: Decimal, task: str | None = None, repeat_complete
     return plan, specs, None
 
 
+def _parse_spec(spec) -> tuple[str, Decimal] | None:
+    """"http://host/path@0.15" → (url, Decimal("0.15")); None unless it is one http(s) URL with a positive max.
+    Split at the first "@", exactly as the subagent reads its --buy specs (so a URL containing "@" is refused)."""
+    if not isinstance(spec, str) or "|" in spec:
+        return None
+    url, sep, cap = spec.partition("@")
+    if not sep or not url.startswith(("http://", "https://")) or any(ch.isspace() for ch in url):
+        return None
+    try:
+        price = Decimal(cap)
+    except ArithmeticError:  # decimal.InvalidOperation
+        return None
+    return (url, price) if price.is_finite() and price > 0 else None
+
+
+def _explicit_plan(rec: dict, envelope: Decimal, specs: list[str],
+                   task: str | None) -> tuple[dict | None, list[str], dict | None]:
+    """A plan that is exactly the caller's `url@max` specs (a site purchase): no catalog, no fallbacks. The same
+    guards as a catalog plan: never buy a URL this wallet already paid for, never plan more than the wallet holds."""
+    if not specs:
+        return None, [], _refuse("nothing_to_buy", hint="no url@max to buy")
+    parsed = [_parse_spec(s) for s in specs]
+    bad = [s for s, p in zip(specs, parsed) if p is None]
+    if bad:
+        return None, [], _refuse("invalid_spec", specs=bad, hint="each spec is one http(s) URL and a positive max: url@max")
+    paid = {p.get("resource") for p in rec.get("payments", []) if p.get("resource") and p.get("ok") is not False}
+    todo = [(url, price) for url, price in parsed if url not in paid]
+    if not todo:
+        return None, [], _refuse("already_bought", items=[url for url, _ in parsed])
+    price = sum((p for _, p in todo), Decimal(0))
+    if price > envelope:
+        return None, [], _refuse("over_budget", requested=str(price), remaining=str(envelope))
+    buy = [f"{url}@{p}" for url, p in todo]
+    plan = {"goal": task or rec.get("sentence") or rec["task"], "envelope": str(envelope),
+            "items": [url for url, _ in todo], "price": str(price), "explicit": True,
+            "lines": [{"item": url, "vendor": None, "url": url, "payee": None, "price": str(p), "fallbacks": [],
+                       "rejected": []} for url, p in todo],
+            "buy": buy, "skipped_already_paid": sorted({url for url, _ in parsed} & paid)}
+    return plan, buy, None
+
+
 def _envelope(rec: dict) -> Decimal | None:
     """What the wallet can spend now: its live RLUSD balance (None if the ledger cannot be read)."""
     from . import service
@@ -312,14 +356,14 @@ def current(dep_id: str) -> dict:
     return {"ok": True, "run": reconcile(dep_id, rec)}
 
 
-def _replay(rec: dict | None, task: str | None, request_id: str | None, keep_open: bool = False) -> dict | None:
+def _replay(rec: dict | None, task: str | None, request_id: str | None, keep_open: bool = False, specs: list[str] | None = None) -> dict | None:
     """A lost HTTP response must never turn a retry into a second purchase run."""
     if not rec or not request_id:
         return None
     prior = (rec.get("run_requests") or {}).get(request_id)
     if not prior:
         return None
-    if prior.get("task") != task or prior.get("keep_open", False) != keep_open:
+    if prior.get("task") != task or prior.get("keep_open", False) != keep_open or prior.get("specs") != specs:
         return _refuse("request_conflict")
     run = reconcile(rec["id"], rec)
     if run and run["id"] == prior["run_id"]:
@@ -327,10 +371,11 @@ def _replay(rec: dict | None, task: str | None, request_id: str | None, keep_ope
     return _refuse("request_superseded", run_id=prior["run_id"])
 
 
-def start(dep_id: str, task: str | None = None, request_id: str | None = None, keep_open: bool = False) -> dict:
+def start(dep_id: str, specs: list[str] | None = None, task: str | None = None, request_id: str | None = None, keep_open: bool = False) -> dict:
+    requested_specs = list(specs) if specs is not None else None
     with _wallet_lock(dep_id):  # a second start for this wallet waits here, then sees the first run
         rec = deployments.get(dep_id)
-        replay = _replay(rec, task, request_id, keep_open)
+        replay = _replay(rec, task, request_id, keep_open, requested_specs)
         if replay is not None:
             return replay
         refused = _startable(rec)
@@ -344,7 +389,10 @@ def start(dep_id: str, task: str | None = None, request_id: str | None = None, k
             return _refuse("balance_unavailable", hint="the ledger could not be read; nothing was started")
         if envelope <= 0:
             return _refuse("over_budget", remaining=str(envelope))
-        plan, specs, refused = _plan(rec, envelope, task, repeat_completed=keep_open)
+        if specs is None:
+            plan, specs, refused = _plan(rec, envelope, task, repeat_completed=keep_open)
+        else:
+            plan, specs, refused = _explicit_plan(rec, envelope, list(specs), task)
         if refused:
             return refused
         run_id = "r_" + uuid.uuid4().hex[:8]
@@ -353,7 +401,7 @@ def start(dep_id: str, task: str | None = None, request_id: str | None = None, k
         # Lock order: runs.py never takes service._main_wallet, so it can never wait on it while holding this one.
         with deployments._lock:
             rec = deployments.get(dep_id)  # planning took a while: the wallet may have been reclaimed meanwhile
-            replay = _replay(rec, task, request_id, keep_open)
+            replay = _replay(rec, task, request_id, keep_open, requested_specs)
             if replay is not None:
                 return replay
             refused = _startable(rec)
@@ -370,16 +418,16 @@ def start(dep_id: str, task: str | None = None, request_id: str | None = None, k
                 _owned.add(run_id)
             requests = dict(rec.get("run_requests") or {})
             if request_id:
-                requests[request_id] = {"task": task, "run_id": run_id, "keep_open": keep_open}
+                requests[request_id] = {"task": task, "run_id": run_id, "keep_open": keep_open, "specs": requested_specs}
             deployments.update(dep_id, run=run, run_requests=requests, buy_only=True)  # from now on cereal co-signs only plan purchases
-        return _launch(rec, run, specs)
+        return _launch(rec, run, specs, task if plan.get("explicit") else None)
 
 
-def _launch(rec: dict, run: dict, specs: list[str]) -> dict:
+def _launch(rec: dict, run: dict, specs: list[str], task: str | None = None) -> dict:
     """Start the subagent for a reserved run (status starting, owned by this process) and its watcher."""
     dep_id, run_id, started_at, plan = rec["id"], run["id"], run["started_at"], run["plan"]
     log_path = Path(run["log"])
-    task = f"{rec.get('name') or rec['task']}: buy {' + '.join(plan['items'])}"
+    task = task or f"{rec.get('name') or rec['task']}: buy {' + '.join(plan['items'])}"
     cmd = [sys.executable, "-m", "cereal.subagent", dep_id, task] + [x for sp in specs for x in ("--buy", sp)]
     env = {**os.environ, "CEREAL_SERVICE_URL": config.SERVICE_URL, "CEREAL_RUN_ID": run_id}  # the subagent talks to this service
     log_file = proc = None

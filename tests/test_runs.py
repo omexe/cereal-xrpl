@@ -431,3 +431,14 @@ def test_new_chat_request_cannot_repay_an_unresolved_purchase(env):
                                      "resource": "http://localhost:8003/swell/agenda", "hash": "PENDING"})
     assert runs.start(dep, task="get agenda", request_id="new", keep_open=True)["refused"] == "payment_pending"
     assert not env["procs"]
+
+
+def test_explicit_site_specs_are_bound_to_the_request_id(env):
+    dep = wallet()
+    specs = ["http://localhost:8003/swell/agenda@0.15"]
+    first = runs.start(dep, specs=specs, task="site research", request_id="site-request")
+    assert first["ok"]
+    assert runs.start(dep, specs=specs, task="site research", request_id="site-request")["run"]["id"] == first["run"]["id"]
+    changed = ["http://localhost:8003/swell/speakers@0.15"]
+    assert runs.start(dep, specs=changed, task="site research", request_id="site-request")["refused"] == "request_conflict"
+    assert len(env["procs"]) == 1
