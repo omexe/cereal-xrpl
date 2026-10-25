@@ -10,3 +10,5 @@ jobs.json
 exports/
 keys/
 deployments*.json
+.claude/worktrees/
+runs/
