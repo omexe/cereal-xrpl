@@ -597,3 +597,38 @@ def test_legacy_cosign_refuses_wrong_issuer(monkeypatch):
     out = legacy.cosign(legacy.CosignRequest(job_id="j1", tx=tx.to_xrpl()))
     assert out["ok"] is False and out["refused"] == "wrong_issuer"
     assert out["issuer"] == fake_issuer.classic_address and out["expected"] == config.RLUSD_ISSUER
+
+
+# ---- planned runs are buy-only: no direct payments, in the subagent's tools and in cereal's policy ----
+
+def test_buy_only_wallet_refuses_direct_payments_before_any_ledger_read(store, monkeypatch):
+    from cereal import service
+    _no_signing(monkeypatch)
+    monkeypatch.setattr(service, "client", lambda: pytest.fail("read the ledger for a refused direct payment"))
+    rec = deployments.update(_active_record()["id"], buy_only=True)
+    r = service.cosign(service.CosignRequest(deployment_id=rec["id"], tx=_tx(config.RLUSD_ISSUER)))
+    assert r["refused"] == "not_a_planned_purchase" and r["payee"] == PAYEE and r["amount"] == "0.25"
+    (refusal,) = deployments.get(rec["id"])["refusals"]
+    assert refusal["refused"] == "not_a_planned_purchase"
+
+
+def test_buy_only_wallet_still_cosigns_x402_purchases(store, monkeypatch):
+    from cereal import service
+    monkeypatch.setattr(config, "REQUIRE_VENDOR_CREDENTIAL", False)
+    monkeypatch.setattr(service, "rlusd_balance", lambda c, a: Decimal("1"))
+    _no_signing(monkeypatch)
+    rec = deployments.update(_active_record()["id"], buy_only=True)
+    # present=True (x402) gets past the buy-only check and stops at the next one (no memo) before signing
+    assert service._cosign_deployment(rec, _tx(config.RLUSD_ISSUER), present=True)["refused"] == "memo_mismatch"
+
+
+def test_planned_subagent_gets_no_pay_tool():
+    import argparse
+    from cereal import subagent
+    rec = {"budget": "0.4"}
+    planned = argparse.Namespace(task="t", payments=1, buy=["http://localhost:8000/swell/agenda@0.3"], ap4m=[])
+    system, tools = subagent.llm_brief(object.__new__(subagent.Subagent), planned, rec, ["rV"], "0.1")
+    assert "pay" not in tools and "buy" in tools and "pay()" not in system
+    unplanned = argparse.Namespace(task="t", payments=2, buy=[], ap4m=[])
+    system, tools = subagent.llm_brief(object.__new__(subagent.Subagent), unplanned, rec, ["rV"], "0.1")
+    assert "pay" in tools and "Make 2 purchases with pay()" in system

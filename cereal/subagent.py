@@ -214,6 +214,45 @@ def _deterministic(s: "Subagent", a, vendors: list[str], amount: str) -> None:
         s.done(f"{a.task}: {made} purchases of {amount} RLUSD{refused}")
 
 
+def llm_brief(s: "Subagent", a: argparse.Namespace, rec: dict, vendors: list[str], amount: str) -> tuple[str, dict]:
+    """The model's instructions and tools. A planned run (--buy / --ap4m) may only buy its plan's resources: no raw
+    pay() tool and no "make N payments" instruction (a model once did both, paying a vendor for nothing). cereal
+    enforces the same thing on its side (buy_only wallets: direct payments are refused)."""
+    planned = bool(a.buy or a.ap4m)
+    tools = {
+        "budget_left": ({"type": "object", "properties": {}}, s.budget_left),
+        "buy": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
+                 "required": ["url"]}, s.buy),
+        "buy_ap4m": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
+                      "required": ["url"]}, s.buy_ap4m),
+        "done": ({"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}, s.done),
+    }
+    if planned:
+        system = (f"You are a cereal subagent. Task: {a.task}. You have a subwallet with {rec['budget']} RLUSD. "
+                  f"Buy only the resources listed below, each at most once, then call done() with a summary that "
+                  f"mentions any refusal and its evidence. Never exceed budget_left(). Never pay a vendor for anything "
+                  f"else; there is no other way to spend.")
+    else:
+        tools["pay"] = ({"type": "object", "properties": {"payee": {"type": "string"}, "amount": {"type": "string"},
+                                                           "invoice_id": {"type": "string"}},
+                         "required": ["payee", "amount"]}, s.pay)
+        system = (f"You are a cereal subagent. Task: {a.task}. You have a subwallet with {rec['budget']} RLUSD. "
+                  f"Candidate vendors, in order of preference: {vendors}. Each purchase costs {amount} RLUSD. Make "
+                  f"{a.payments} purchases with pay(). If cereal refuses a vendor, do not retry it; use the next one. "
+                  f"Never exceed budget_left(). Then call done() with a summary that mentions any refusal and its evidence.")
+    if a.buy:
+        options = []
+        for n, spec in enumerate(a.buy, 1):
+            alts = [alt.partition("@") for alt in spec.split("|")]
+            options.append(f"purchase {n}: try in this order, stop at the first that succeeds: " + "; ".join(
+                f"buy(url='{u}'" + (f", max_rlusd='{cap}')" if cap else ")") for u, _, cap in alts))
+        system += (" Buy these over x402 with buy(): " + " | ".join(options) +
+                   ". Never pay more than the max shown. If cereal refuses, report the refusal; don't retry it.")
+    if a.ap4m:
+        system += f" Resources to buy from Mastercard AP4M merchants with buy_ap4m(): {a.ap4m}."
+    return system, tools
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("deployment_id"); ap.add_argument("task")
@@ -239,31 +278,7 @@ def main() -> None:
     if a.probe_off_plan:  # the plan lock: a credentialed vendor that is not in this subagent's plan
         emit("plan_lock", {"payee": a.probe_off_plan, **s.pay(_addr(a.probe_off_plan), "0.01")})
     if llm.available():
-        system = (f"You are a cereal subagent. Task: {a.task}. You have a subwallet with {rec['budget']} RLUSD. "
-                  f"Candidate vendors, in order of preference: {vendors}. Each purchase costs {amount} RLUSD. Make "
-                  f"{a.payments} purchases with pay(). If cereal refuses a vendor, do not retry it; use the next one. "
-                  f"Never exceed budget_left(). Then call done() with a summary that mentions any refusal and its evidence.")
-        tools = {
-            "budget_left": ({"type": "object", "properties": {}}, s.budget_left),
-            "pay": ({"type": "object", "properties": {"payee": {"type": "string"}, "amount": {"type": "string"},
-                                                       "invoice_id": {"type": "string"}},
-                     "required": ["payee", "amount"]}, s.pay),
-            "buy": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
-                     "required": ["url"]}, s.buy),
-            "buy_ap4m": ({"type": "object", "properties": {"url": {"type": "string"}, "max_rlusd": {"type": "string"}},
-                          "required": ["url"]}, s.buy_ap4m),
-            "done": ({"type": "object", "properties": {"summary": {"type": "string"}}, "required": ["summary"]}, s.done),
-        }
-        if a.buy:
-            options = []
-            for n, spec in enumerate(a.buy, 1):
-                alts = [alt.partition("@") for alt in spec.split("|")]
-                options.append(f"purchase {n}: try in this order, stop at the first that succeeds: " + "; ".join(
-                    f"buy(url='{u}'" + (f", max_rlusd='{cap}')" if cap else ")") for u, _, cap in alts))
-            system += (" Buy these over x402 with buy(): " + " | ".join(options) +
-                       ". Never pay more than the max shown. If cereal refuses, report the refusal; don't retry it.")
-        if a.ap4m:
-            system += f" Resources to buy from Mastercard AP4M merchants with buy_ap4m(): {a.ap4m}."
+        system, tools = llm_brief(s, a, rec, vendors, amount)
         try:
             llm.run_tool_loop(system, f"Begin: {a.task}", tools, on_event=emit)
         except llm.NoModel as e:

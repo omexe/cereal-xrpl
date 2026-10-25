@@ -75,7 +75,7 @@ def run(message: str, folder: str | None = None, say: Callable[[str, str, str | 
                               "reason": r["reason"], "evidence": (r.get("evidence") or {}).get("hash")} for l in p["lines"] for r in l["rejected"]]}
     dep = requests.post(f"{url}/subagents", timeout=900, json={
         "task": card["name"], "budget": budget, "allowed_payees": payees, "expires_in_hours": card["expires_in_hours"],
-        "approval_threshold": card["approval_threshold"], "sweep_when_done": True, "name": card["name"],
+        "approval_threshold": card["approval_threshold"], "sweep_when_done": True, "buy_only": True, "name": card["name"],
         "sentence": message, "folder": folder, "plan": plan_rec}).json()
     if not dep.get("ok"):
         _say("hivemind", f"No subagent deployed: {dep.get('refused')}")

@@ -134,7 +134,8 @@ def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, stat
 
 def _anthropic_create(**kw):
     import anthropic
-    client = anthropic.Anthropic()
+    # A stalled call must not hold a run for the SDK's default 10 minutes: fail over to the deterministic path instead.
+    client = anthropic.Anthropic(timeout=float(os.getenv("CEREAL_ANTHROPIC_TIMEOUT", "90")), max_retries=2)
     if kw.get("model", "").startswith("claude-haiku"):  # Haiku 5.5 has no server-side refusal fallback
         return client.messages.create(**kw)
     try:  # server-side refusal fallback, routed by category ("default")

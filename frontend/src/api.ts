@@ -130,6 +130,7 @@ export const REFUSAL_TEXT: Record<string, string> = {
   funding_failed: 'The wallet was locked but funding did not validate.',
   already_running: 'This wallet’s task is already running.',
   use_add_funds: 'Only Add funds can raise a wallet’s budget.',
+  not_a_planned_purchase: 'Refused: this wallet may only buy what its plan lists.',
 };
 
 export function describeRefusal(body: Refusal): string {

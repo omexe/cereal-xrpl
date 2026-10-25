@@ -52,6 +52,7 @@ class DeployRequest(BaseModel):
     # Part 5: payments above this many RLUSD need the owner's Ledger instead of cereal (None = company default only)
     approval_threshold: str | None = None
     sweep_when_done: bool = False            # leftovers go home automatically when the subagent reports done
+    buy_only: bool = False                   # a planned task: cereal co-signs only x402 purchases, no direct payments
     name: str | None = None                  # the wallet's name, e.g. "Market Sizing"
     folder: str | None = None                # the design's folders (e.g. "Market Research"); shows in the export
     sentence: str | None = None              # the plain-English sentence it was created from
@@ -238,7 +239,8 @@ def deploy(req: DeployRequest) -> dict:
             req.task, req.budget, payees, req.expires_in_hours, req.vendor_class, request_id=req.request_id or None,
             deploy_request=_request_terms(req) if req.request_id else None, plan=req.plan or None,
             approval_threshold=req.approval_threshold, name=req.name, folder=req.folder, sentence=req.sentence,
-            sweep_when_done=req.sweep_when_done or None, speculos_payment_decision=req.speculos_payment_decision)
+            sweep_when_done=req.sweep_when_done or None, speculos_payment_decision=req.speculos_payment_decision,
+            buy_only=req.buy_only or None)
         if rec.get("refused"):  # a cap (no record, no transaction), or the request_id taken outside this lock
             prior = rec.get("refused") == "duplicate_request" and deployments.get(rec["deployment"])
             return _replay(prior, req) if prior else rec
@@ -543,6 +545,11 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     tx = Transaction.from_xrpl(tx_json)
     if tx.transaction_type.value != "Payment" or tx.account != rec["subwallet"]:
         return _refuse("not_a_subwallet_payment", account=tx.account, type=tx.transaction_type.value)
+    if rec.get("buy_only") and not present:  # a planned run buys its plan's resources over x402, nothing else
+        amt = tx.amount
+        return _refuse("not_a_planned_purchase", payee=tx.destination,
+                       amount=amt.value if isinstance(amt, IssuedCurrencyAmount) else str(amt),
+                       hint="this wallet's task only pays vendors for the resources in its plan")
     c = client()
     if config.REQUIRE_VENDOR_CREDENTIAL:  # Part 2: trust comes from the ledger, not from a list we keep
         v = vendors.check(c, tx.destination, vendor_class=rec.get("vendor_class", "data"))

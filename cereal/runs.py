@@ -324,7 +324,7 @@ def start(dep_id: str) -> dict:
                    "plan": plan, "summary": None, "error": None}
             with _owned_lock:
                 _owned.add(run_id)
-            deployments.update(dep_id, run=run)
+            deployments.update(dep_id, run=run, buy_only=True)  # from now on cereal co-signs only plan purchases
         return _launch(rec, run, specs)
 
 

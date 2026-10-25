@@ -32,6 +32,7 @@ PLAIN = {
     "invalid_request_id": "the request's retry id is malformed",
     "in_progress": "the same request is already being handled",
     "request_id_reused": "a retry id was reused for a different request",
+    "not_a_planned_purchase": "a direct payment from a wallet that may only buy what its plan lists",
 }
 REPORTABLE = {  # events a subagent or demo beat may report; each is a refusal by the ledger itself
     "hijack_alone": "a hijacked subagent signed a payment by itself",
