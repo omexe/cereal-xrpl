@@ -47,6 +47,7 @@ const MAX_HOURS = 168;
 const RULES_REFUSALS: Record<string, string> = {
   rules_problems: 'cereal refused this change. Nothing was changed.',
   return_failed: 'The excess did not go back to the main wallet, so no rule was changed.',
+  return_unknown: 'cereal could not confirm the return, so no rule was changed.',
 };
 
 function formFrom(live: LiveInfo): RulesForm {

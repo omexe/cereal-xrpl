@@ -177,6 +177,17 @@ def test_a_failed_return_changes_nothing(env):
     assert after["budget"] == "0.6" and after["approval_threshold"] == "0.2" and not after.get("rules_history")
 
 
+def test_an_unknown_return_outcome_claims_nothing(env, monkeypatch):
+    rec, _ = env
+
+    def dropped(*a, **k):
+        raise ConnectionError("node went away")
+    monkeypatch.setattr(rules, "multisign_submit", dropped)
+    out = rules.apply(rec["id"], {"spend": "0.4"})
+    assert out["refused"] == "return_unknown" and "nothing is returned twice" in out["problems"][0]
+    assert deployments.get(rec["id"])["budget"] == "0.6"
+
+
 def test_only_active_wallets_can_be_edited(env):
     rec, ledger = env
     deployments.update(rec["id"], status="reclaimed")

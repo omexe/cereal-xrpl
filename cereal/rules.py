@@ -465,7 +465,14 @@ def apply(dep_id: str, change: dict) -> dict:
         hashes: dict[str, str] = {}
         excess = Decimal(p["returns"])
         if excess > 0:
-            r = return_excess(rec, excess, c)
+            try:
+                r = return_excess(rec, excess, c)
+            except Exception as e:  # e.g. the node dropped mid-submit: the outcome is unknown, so claim nothing
+                return _refuse("return_unknown", error=f"{type(e).__name__}: {e}"[:300], changes=p["changes"],
+                               subwallet=rec["subwallet"],
+                               problems=[f"cereal could not confirm the {_s(excess)} RLUSD return; no rule was changed. "
+                                         "Check the subwallet on the explorer: a retry recomputes the excess from the "
+                                         "ledger balance, so nothing is returned twice"])
             if not r.get("ok"):  # nothing persisted; never retried silently. A tec/tef or an expired tx moved nothing.
                 return _refuse("return_failed", result=r.get("result"), hash=r.get("hash"), explorer=r.get("explorer"),
                                validated=r.get("validated"), changes=p["changes"],
