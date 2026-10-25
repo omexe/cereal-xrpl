@@ -35,8 +35,6 @@ function rlusd(values: (string | undefined)[]): string {
 /** Settled = validated success with a hash (AP4M: redeemed on the XRPL EVM chain), one entry per hash. */
 const settled = (rec: Rec) => [...new Map((rec.payments ?? [])
   .filter(p => p.ok === true && p.hash && (p.validated === true || p.rail === 'ap4m')).map(p => [p.hash, p])).values()];
-const proofHashes = (rec: Rec) => [...new Set(Object.values(rec.hashes ?? {}).flatMap(v => Array.isArray(v) ? v : [v])
-  .filter((h): h is string => typeof h === 'string' && h.length > 0))];
 
 async function record(request: APIRequestContext, id: string): Promise<Rec | null> {
   const res = await request.get(`/api/subagents/${id}`);
@@ -53,7 +51,7 @@ async function openWallet(page: Page, id: string) {
   await page.getByRole('button', { name: 'Transactions', exact: true }).click();
 }
 
-test('a retired wallet shows settled spending, Ledger approval, plan evidence and its on-ledger lifecycle', async ({ page, request }) => {
+test('a retired wallet shows settled spending, Ledger approval, plan evidence without lifecycle clutter', async ({ page, request }) => {
   const rec = await record(request, DEMO);
   test.skip(!rec, `${DEMO} is not on this service`);
   const errors: string[] = [];
@@ -112,16 +110,7 @@ test('a retired wallet shows settled spending, Ledger approval, plan evidence an
   await expect(agenda.locator('a')).toHaveAttribute('href', `${EXPLORER}/transactions/79B247957AB315E89DA12435B496DC74BE9C22A15B6D35DFC13242621FDA3ADB`);
   expect(await page.locator('.transaction-meta').allInnerTexts()).not.toContainEqual(expect.stringMatching(/\b\d+s\b/));
 
-  // On-ledger proof: every lifecycle hash on the record, each linked to the explorer.
-  const hashes = proofHashes(rec!);
-  expect(hashes.length).toBeGreaterThanOrEqual(5);
-  const proof = page.locator('.wallet-proof a');
-  await expect(proof).toHaveCount(hashes.length);
-  expect(await proof.evaluateAll(links => links.map(a => (a as HTMLAnchorElement).href)))
-    .toEqual(expect.arrayContaining(hashes.map(h => `${EXPLORER}/transactions/${h}`)));
-  for (const label of ['Activate', 'Lock · trust line', 'Lock · signer list', 'Lock · master key off', 'Fund', 'Reclaim 1/2', 'Retire']) {
-    await expect(page.locator('.wallet-proof')).toContainText(label);
-  }
+  await expect(page.locator('.wallet-proof')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

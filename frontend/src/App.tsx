@@ -249,7 +249,7 @@ export default function App() {
           </div>;
         })}
       </section>
-      <section className={`sidebar-section wallet-drop-zone ${dropTarget === 'disposable' ? 'is-drop-target' : ''}`} data-wallet-group="disposable" aria-labelledby="disposable-heading" {...dropHandlers()}><h2 id="disposable-heading" className="section-heading">{isHome ? 'Active Wallets' : 'Disposable Wallets'}</h2>
+      <section className={`sidebar-section wallet-drop-zone ${dropTarget === 'disposable' ? 'is-drop-target' : ''}`} data-wallet-group="disposable" aria-labelledby="disposable-heading" {...dropHandlers()}><h2 id="disposable-heading" className="section-heading">Disposable Wallets</h2>
         {visibleWallets.map(w => walletRow(w))}
         {isHome && activeWallets.length > homeShown && <button className="wallet-more" onClick={() => setShowAllWallets(!showAllWallets)}>{showAllWallets ? 'Show fewer' : `+ ${activeWallets.length - homeShown} more`}</button>}
         {!activeWallets.length && (!isLive || live.status === 'ready') && <button className="empty-wallets" onClick={() => setModal('wallet')}>Create your first wallet</button>}

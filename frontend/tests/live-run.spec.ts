@@ -1,6 +1,7 @@
 import { test, expect, type APIRequestContext, type Page } from '@playwright/test';
 
-// A01/A02/A07 on XRPL testnet: start a wallet's task from the UI, watch the subagent buy, see the sweep, then retire.
+// A01/A02/A07 on XRPL testnet: seed a run via the API, then inspect payments and cleanup in the wallet UI.
+// Task launch through chat is covered by sandbox-live-chat.spec.ts.
 // Spends testnet RLUSD; run under the machine-wide lock (see playwright.live.config.ts):
 //   CEREAL_E2E_PORT=8107 CEREAL_E2E_UI_PORT=5207 ../.venv/bin/python ../scripts/with_testnet_lock.py -- \
 //     npx playwright test -c playwright.live.config.ts tests/live-run.spec.ts
@@ -47,7 +48,7 @@ test.afterAll(async ({ playwright }) => {
   await request.dispose();
 });
 
-test('start the task: the subagent buys from Vendor C, sweeps home, and the account can be retired', async ({ page, request }) => {
+test('the subagent buys from Vendor C, sweeps home, and the account can be retired', async ({ page, request }) => {
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   const w = await createWallet(request, 'Run test: spend up to 0.5 RLUSD today, only at Vendor A and Vendor C. '
@@ -57,18 +58,22 @@ test('start the task: the subagent buys from Vendor C, sweeps home, and the acco
 
   const actions = await openWallet(page, w.id);
   await expect(actions).toHaveAttribute('data-wallet-status', 'active');
-  await actions.getByRole('button', { name: 'Start task' }).click();
-  await expect(actions.getByText(/^Running · \d+:\d\d/)).toBeVisible();
-  await expect(actions.getByText(/Buying the agenda from Vendor C at 0\.15 RLUSD/)).toBeVisible();
+  await expect(actions.getByRole('button', { name: /^Start/ })).toHaveCount(0);
+  await request.post(`${API}/subagents/${w.id}/run`);
+  await expect(actions.getByRole('region', { name: 'Task run' })).toHaveCount(0);
   await expect(actions.getByRole('button', { name: 'Start task' })).toHaveCount(0);
   const second = await (await request.post(`${API}/subagents/${w.id}/run`)).json();
   expect(second.refused, 'a second start while running').toBe('already_running');
 
-  await expect(actions.locator('.run')).toHaveAttribute('data-run-status', 'succeeded', { timeout: 10 * 60_000 });
-  const paid = actions.locator('[data-payment-state="settled"]');
+  await expect.poll(async () => (await (await request.get(`${API}/subagents/${w.id}/run`)).json()).run?.status,
+    { timeout: 10 * 60_000 }).toBe('succeeded');
+  await page.getByRole('button', { name: 'Transactions', exact: true }).click();
+  const paid = page.locator('.transaction-card[data-state="settled"]');
   await expect(paid).toHaveCount(1);
-  await expect(paid).toContainText('Swell agenda · Vendor C · 0.15 RLUSD');
-  await expect(paid.getByRole('link', { name: 'Settled' })).toHaveAttribute('href', EXPLORER_TX);
+  await expect(paid).toContainText('Swell agenda');
+  await expect(paid).toContainText('Vendor C');
+  await expect(paid).toContainText('0.15 RLUSD');
+  await expect(paid.getByRole('link')).toHaveAttribute('href', EXPLORER_TX);
 
   await expect(actions).toHaveAttribute('data-wallet-status', 'reclaimed', { timeout: 3 * 60_000 });
   await expect(actions.getByText('Swept back · 0.35 RLUSD returned to the main wallet')).toBeVisible();
@@ -92,14 +97,12 @@ test('start the task: the subagent buys from Vendor C, sweeps home, and the acco
   expect(errors).toEqual([]);
 });
 
-test('a sentence that names nothing to buy is refused; Done sweeps it home', async ({ page, request }) => {
+test('an idle wallet has no task launch controls; Done sweeps it home', async ({ page, request }) => {
   const w = await createWallet(request, 'Idle test: spend up to 0.1 RLUSD today, only at Vendor C. Sweep back when done.');
   const actions = await openWallet(page, w.id);
-  await actions.getByRole('button', { name: 'Start task' }).click();
-  await expect(actions.getByRole('alert')).toContainText('Nothing to buy');
   expect((await (await request.post(`${API}/subagents/${w.id}/run`)).json()).refused).toBe('nothing_to_buy');
   expect((await (await request.get(`${API}/subagents/${w.id}/run`)).json()).run).toBeNull();
-  await expect(actions.getByRole('button', { name: 'Start task' })).toBeEnabled();
+  await expect(actions.getByRole('button', { name: /^Start/ })).toHaveCount(0);
 
   await actions.getByRole('button', { name: 'Done · sweep back' }).click();
   await expect(actions).toHaveAttribute('data-wallet-status', 'reclaimed', { timeout: 3 * 60_000 });

@@ -409,7 +409,10 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
 .wallet-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-marker-inactive); }
 .wallet-status[data-status=active]::before { background: var(--color-marker-active); }
 .wallet-status[data-status=deploying]::before { background: var(--color-accent); }
-.wallet-figures { display: flex; flex-wrap: wrap; gap: 10px 32px; margin: 14px 0 0; padding: 0 5px; }
+.wallet-summary-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px 24px; margin-top: 14px; }
+.wallet-summary-row > .wallet-actions { margin: 0 0 0 auto; }
+.wallet-summary-row .action-row { justify-content: flex-end; }
+.wallet-figures { display: flex; flex-wrap: wrap; gap: 10px 32px; margin: 0; padding: 0 5px; }
 .wallet-figures > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wallet-figures dt { font: var(--font-caption); color: var(--color-text-muted); }
 .wallet-figures dd { font: var(--font-control); color: var(--color-text-primary); margin: 0; white-space: nowrap; }
@@ -418,6 +421,7 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
 .wallet-detail.is-live .constraints button { text-align: start; }
 .wallet-detail.is-live .constraints button:disabled { color: var(--color-text-primary); }
 .wallet-rule-note, .wallet-plan-note { font: var(--font-caption); color: var(--color-text-secondary); margin-top: 10px; overflow-wrap: anywhere; }
+.budget-legend .wallet-rule-note { margin: 0 0 0 auto; text-align: right; align-self: center; }
 .wallet-rule-note.is-expired { color: var(--color-text-primary); }
 .transaction-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; min-width: 0; }
 .transaction-meta time { white-space: nowrap; }
@@ -427,9 +431,6 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
 .transaction-card[data-state=failed] .transaction-amount, .transaction-card[data-state=pending] .transaction-amount { color: var(--color-text-muted); }
 .refusal-card { background: var(--color-surface); border: 1px dashed var(--color-border); padding: 7px 9px; border-radius: 5px; flex-shrink: 0; }
 .refusal-card .transaction-amount { color: var(--color-text-muted); }
-.wallet-proof { margin-top: 16px; }
-.wallet-proof h3 { font: var(--font-label); color: var(--color-text-muted); margin: 0 0 6px; }
-.wallet-proof ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font: var(--font-caption); }
 @media (max-width: 760px) {
   .wallet-figures { gap: 8px 20px; padding: 0; }
 }

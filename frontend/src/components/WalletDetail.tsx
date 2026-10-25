@@ -1,7 +1,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronRight } from '@untitledui/icons';
 import {
-  activityItems, activitySummary, durationLabel, isExpired, lifecycleProofs, nameLookup, planSkipped, segmentWidth,
+  activityItems, activitySummary, durationLabel, isExpired, nameLookup, planSkipped, segmentWidth,
   settledByMerchant, shortHash, spending, statusLabel, uniquePayments, type PaymentItem, type RefusalItem,
 } from '../activity';
 import type { Vendor } from '../api';
@@ -23,7 +23,7 @@ interface Props {
   onAddFunds: () => void;
   onEditConstraints: () => void;
   onRestore: () => void;
-  /** Live only: run / cleanup controls (WalletActions). */
+  /** Live only: wallet cleanup controls (WalletActions). */
   actions?: ReactNode;
   /** Live only: the vendor directory (GET /vendors), to name payees that are not on this wallet's list. */
   vendors?: Vendor[];
@@ -188,7 +188,6 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
   const items = activityItems(rec, nameOf);
   const summary = activitySummary(items);
   const skipped = planSkipped(rec.plan);
-  const proofs = lifecycleProofs(rec);
   const payees = (rec.allowed_payees ?? []).map(nameOf);
   const active = live.status === 'active';
   const editable = active && !wallet.archived;
@@ -216,7 +215,12 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
       <div className="budget-legend">{merchants.map(m => <span key={m.address}><i style={{ background: m.color }} />{m.merchant} · {money(m.amount)}</span>)}
         {!merchants.length && <span>No settled spending yet</span>}
         {Number(spent) > Number(live.budget) && <span className="budget-over-limit">Over budget</span>}
+        <p className={`wallet-rule-note ${expired ? 'is-expired' : ''}`}>
+          {expired ? <>Expired <When at={live.expiresAt} />. cereal refuses every payment after that.</> : <>Expires <When at={live.expiresAt} />.</>}
+          {finished && ` This wallet is ${statusLabel(live.status).toLowerCase()}; its rules no longer change.`}
+        </p>
       </div>
+      <div className="wallet-summary-row">
       <dl className="wallet-figures">
         <div data-figure="available" title={live.available === null ? 'The ledger could not be read' : 'RLUSD the subwallet holds on the ledger now'}><dt>Available</dt><dd>{money(live.available)}</dd></div>
         <div data-figure="spent" title="Payments the ledger validated"><dt>Spent</dt><dd>{money(spent)}</dd></div>
@@ -225,6 +229,8 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
         {live.address && <div data-figure="address"><dt>Subwallet</dt><dd>
           <Explorer href={explorerAccount(live.address)!} title={`${live.address} on the testnet explorer`}>{shortAddress(live.address)}</Explorer></dd></div>}
       </dl>
+      {actions}
+      </div>
     </section>
     <section className="wallet-policy" aria-label="Spending rules">
       {wallet.archived && <h2>Archived wallet</h2>}
@@ -238,16 +244,11 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
           : <><button {...rule}>cereal co-signs every payment</button>. </>}
         <button {...rule}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
       </p>
-      <p className={`wallet-rule-note ${expired ? 'is-expired' : ''}`}>
-        {expired ? <>Expired <When at={live.expiresAt} />. cereal refuses every payment after that.</> : <>Expires <When at={live.expiresAt} />.</>}
-        {finished && ` This wallet is ${statusLabel(live.status).toLowerCase()}; its rules no longer change.`}
-      </p>
       {skipped.length > 0 && <p className="wallet-plan-note">Skipped while planning:{' '}
         {skipped.map((s, i) => <span key={`${s.vendor}-${s.reason}`}>{i ? '; ' : ''}{s.vendor}{s.price ? ` (${money(s.price)})` : ''}, {s.reason}
           {s.link && <> · <Explorer href={s.link} title="Evidence on the testnet explorer">evidence</Explorer></>}</span>)}.
       </p>}
       {wallet.archived && <button className="text-button restore" onClick={onRestore}>Restore wallet</button>}
-      {actions}
     </section>
     <Activity walletId={wallet.id} map={map} summary={summary || 'No activity yet'}>
       <div className="transaction-list" tabIndex={items.length ? 0 : undefined} role="region" aria-label="Wallet activity">
@@ -256,10 +257,6 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
           : <RefusalCard key={item.key} item={item} />)}
         {!items.length && <p className="transaction-empty">No payments or refused attempts for this wallet yet.</p>}
       </div>
-      {proofs.length > 0 && <section className="wallet-proof" aria-labelledby="proof-heading">
-        <h3 id="proof-heading">On-ledger proof</h3>
-        <ul>{proofs.map(p => <li key={p.key}><Explorer href={p.link} title={`${p.hash} on the explorer`}>{p.label} · {shortHash(p.hash)}</Explorer></li>)}</ul>
-      </section>}
     </Activity>
   </article>;
 }
