@@ -1,8 +1,9 @@
 /** I01: the live data contract. Maps the cereal service's records onto the UI's Wallet view model while keeping every
  * exact amount as a decimal string in `wallet.live`. Treasury, available, budget, spent, pending and returned are
  * distinct fields; a payment counts as spent only once the ledger validated it. */
+import { paymentStatus, spending, uniquePayments } from './activity';
 import type { ApiRecord, Folder, Payment, Vendor } from './api';
-import { shortAddress, sumDecimals } from './format';
+import { shortAddress } from './format';
 import type { Wallet, Workspace } from './wallets';
 
 export interface LiveInfo {
@@ -29,8 +30,9 @@ export interface LiveInfo {
 export const ACTIVE_STATUSES = ['active', 'deploying'];
 export const isActive = (wallet: Wallet) => !wallet.live || ACTIVE_STATUSES.includes(wallet.live.status);
 
-export const paymentState = (p: Payment): 'settled' | 'failed' | 'pending' =>
-  p.ok === true ? 'settled' : p.ok === false ? 'failed' : 'pending';
+/** One settlement rule for the whole app (activity.ts): settled only with a validated hash; a hash recorded twice
+ * counts once. */
+export const paymentState = (p: Payment): 'settled' | 'failed' | 'pending' => paymentStatus(p);
 
 export function vendorName(address: string, vendors: Vendor[]): string {
   return vendors.find(v => v.address === address)?.name ?? shortAddress(address);
@@ -47,15 +49,15 @@ export function resourceTitle(resource?: string | null): string {
 }
 
 export function toWallet(rec: ApiRecord, vendors: Vendor[]): Wallet {
-  const payments = rec.payments ?? [];
+  const payments = uniquePayments(rec.payments ?? []);
+  const { spent, pending } = spending(payments);
   const created = rec.created_at ? Date.parse(rec.created_at) : NaN;
   const expires = Date.parse(rec.expires_at);
   const days = Number.isFinite(created) && Number.isFinite(expires) ? Math.max(1, Math.ceil((expires - created) / 86_400_000)) : 1;
   const budget = rec.budget;
   const live: LiveInfo = {
     status: rec.status, address: rec.subwallet, available: rec.balance ?? null, budget,
-    spent: sumDecimals(payments.filter(p => paymentState(p) === 'settled').map(p => p.amount)),
-    pending: sumDecimals(payments.filter(p => paymentState(p) === 'pending').map(p => p.amount)),
+    spent, pending,
     returned: rec.returned ?? '0', approval: rec.approval_threshold ?? null, expiresAt: rec.expires_at,
     createdAt: rec.created_at, payees: rec.allowed_payees ?? [], record: rec,
   };

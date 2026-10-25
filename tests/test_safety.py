@@ -572,3 +572,28 @@ def test_holding_the_store_lock_blocks_writers_in_other_processes(store):
         assert deployments.get(rec["id"])["payments"] == [], "a writer in another process got in"
     child.wait(30)
     assert child.returncode == 0 and len(deployments.get(rec["id"])["payments"]) == 1
+
+
+
+def test_legacy_cosign_refuses_wrong_issuer(monkeypatch):
+    """R01 for the legacy single-job co-signer (POST /cosign with job_id): the RLUSD code from another issuer is refused
+    before any balance read or signature."""
+    from xrpl.models.amounts import IssuedCurrencyAmount
+    from xrpl.models.transactions import Payment
+    from xrpl.wallet import Wallet
+    from cereal import config, cosign as legacy
+    burner, vendor, fake_issuer = Wallet.create(), Wallet.create(), Wallet.create()
+    monkeypatch.setattr(legacy.jobs, "get", lambda job_id: {"burner": burner.classic_address, "status": "active",
+                                                            "expires_at": "2999-01-01T00:00:00+00:00"})
+    monkeypatch.setattr(legacy, "client", lambda: object())
+    monkeypatch.setattr(legacy.vendors, "check", lambda *a, **k: {"status": "valid"})
+
+    def no_balance_read(*a, **k):
+        raise AssertionError("the balance must not be read for a wrong-issuer payment")
+    monkeypatch.setattr(legacy, "rlusd_balance", no_balance_read)
+    monkeypatch.setattr(legacy, "cosign_and_submit", no_balance_read)
+    tx = Payment(account=burner.classic_address, destination=vendor.classic_address,
+                 amount=IssuedCurrencyAmount(currency=config.RLUSD_CURRENCY, issuer=fake_issuer.classic_address, value="0.1"))
+    out = legacy.cosign(legacy.CosignRequest(job_id="j1", tx=tx.to_xrpl()))
+    assert out["ok"] is False and out["refused"] == "wrong_issuer"
+    assert out["issuer"] == fake_issuer.classic_address and out["expected"] == config.RLUSD_ISSUER

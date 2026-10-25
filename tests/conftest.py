@@ -32,3 +32,13 @@ def _no_model_calls_unless_marked(request, monkeypatch):
     if request.node.get_closest_marker("llm") is None:
         monkeypatch.setenv("CEREAL_LLM", "off")
     monkeypatch.setenv("CEREAL_SWEEPER", "0")  # test services never sweep or retire in the background
+
+
+@pytest.fixture(autouse=True)
+def _private_lock_dir(tmp_path_factory, monkeypatch):
+    """Offline tests take cereal's machine-wide locks in a private directory: they never wait behind a live service
+    (or another worker's testnet run) on /tmp/cereal-treasury.lock, and they leave no lock files behind."""
+    from cereal import xlock
+    private = tmp_path_factory.getbasetemp()
+    monkeypatch.setattr(xlock, "LOCK_DIR", private)
+    monkeypatch.setenv("CEREAL_LOCK_DIR", str(private))  # child processes a test starts inherit it

@@ -26,6 +26,12 @@ PLAIN = {
     "vendor_pending": "skipped while planning: the vendor hasn't accepted its credential",
     "not_on_your_list": "skipped while planning: not one of the vendors you named",
     "cap_exceeded": "company limit reached",
+    "wrong_issuer": "not real RLUSD: the right currency code from a different issuer",
+    "deploy_error": "the wallet could not be set up; nothing was sent",
+    "deploy_interrupted": "wallet setup stopped partway; it is kept for review and never redeployed",
+    "invalid_request_id": "the request's retry id is malformed",
+    "in_progress": "the same request is already being handled",
+    "request_id_reused": "a retry id was reused for a different request",
 }
 REPORTABLE = {  # events a subagent or demo beat may report; each is a refusal by the ledger itself
     "hijack_alone": "a hijacked subagent signed a payment by itself",

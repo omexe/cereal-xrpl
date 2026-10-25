@@ -52,6 +52,8 @@ def cosign(req: CosignRequest) -> dict:
     amount = tx.amount
     if not isinstance(amount, IssuedCurrencyAmount) or amount.currency != config.RLUSD_CURRENCY:
         return refuse("not_rlusd", amount=str(amount))
+    if amount.issuer != config.RLUSD_ISSUER:  # R01: the RLUSD code from any other issuer is a different token
+        return refuse("wrong_issuer", issuer=amount.issuer, expected=config.RLUSD_ISSUER, currency=amount.currency)
     remaining = rlusd_balance(c, job["burner"])
     if Decimal(amount.value) > remaining:
         return refuse("over_budget", requested=amount.value, remaining=str(remaining))
