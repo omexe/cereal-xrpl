@@ -16,6 +16,7 @@ original result; a request a crash left unfinished is settled from the ledger by
 from __future__ import annotations
 
 import re
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -139,6 +140,20 @@ def _validated(c, tx_hash: str) -> dict | None:
     return r if r.get("validated") else None
 
 
+def _restore_limit(dep_id: str, c) -> dict:
+    """After a raise whose payment never arrived: the subwallet's limit back to the budget it still has (the lock's
+    invariant, limit == budget). Only on an active wallet: on a reclaimed one the line is gone and must stay gone."""
+    rec = deployments.get(dep_id) or {}
+    if rec.get("status") != "active" or not rec.get("subwallet"):
+        return {"ok": False, "skipped": f"wallet is {rec.get('status')}"}
+    try:
+        r = multisign_submit(limit_trustset(rec["subwallet"], plain(Decimal(str(rec["budget"]))), dep_id, rec["tag"]),
+                             [keystore.load(dep_id), config.wallet("CEREAL_COSIGN")], c)
+    except Exception as e:
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"[:200]}
+    return {k: r.get(k) for k in ("ok", "result", "hash")}
+
+
 def _settle_interrupted(dep_id: str, rid: str, prev: dict, c) -> dict:
     h = prev.get("hash")
     if not h:  # interrupted before the device signed: no signed payment ever existed
@@ -150,11 +165,12 @@ def _settle_interrupted(dep_id: str, rid: str, prev: dict, c) -> dict:
         if res == "tesSUCCESS":
             return _finish(dep_id, rid, _record_success(dep_id, rid, prev["amount"], prev["budget_after"], h,
                                                         prev.get("trustline_hash"), prev.get("approval") or {}, c))
-        return _finish(dep_id, rid, _refuse("funding_failed", request_id=rid, result=res, hash=h,
-                                            explorer=explorer(h)))
+        return _finish(dep_id, rid, _refuse("funding_failed", request_id=rid, result=res, hash=h, explorer=explorer(h),
+                                            trustline_restored=_restore_limit(dep_id, c)))
     lls = prev.get("last_ledger_sequence")
     if lls and ledger_index(c) > int(lls):  # past its LastLedgerSequence and not validated: it can never apply
         return _finish(dep_id, rid, _refuse("funding_failed", request_id=rid, result="expired", hash=h,
+                                            trustline_restored=_restore_limit(dep_id, c),
                                             note="the approved payment expired without validating; nothing was sent"))
     return _refuse("request_pending", request_id=rid, hash=h, explorer=explorer(h), last_ledger_sequence=lls,
                    note="an earlier attempt with this request_id may still validate; nothing new was sent")
@@ -166,18 +182,20 @@ def fund(dep_id: str, amount: str, request_id: str | None = None, speculos_decis
     """Top up an active wallet by `amount` RLUSD with the owner's Ledger approval. None if the wallet is unknown."""
     from . import service
     amount = normalized(amount)
-    rid = (request_id or "").strip() or None
+    # Every top-up gets an id, so even a caller that sent none can be settled from the ledger after a crash.
+    rid = (request_id or "").strip()[:100] or f"srv-{uuid.uuid4().hex}"
     out = replay(dep_id, rid, amount)
     if out:
         return out
     rec = deployments.get(dep_id)
     if not rec:
         return None
-    refused = check(rec, amount)
-    if refused:
-        return replay(dep_id, rid, amount) or refused  # a twin request may have finished meanwhile
-    if not config.DEVICE_FUNDING:
-        return _refuse("device_required", hint="a top-up is the owner's action on the Ledger: set CEREAL_DEVICE_FUNDING=1")
+    if rid not in _requests(dep_id):  # a request seen before is settled under the lock, whatever the wallet is now
+        refused = check(rec, amount)
+        if refused:
+            return replay(dep_id, rid, amount) or refused  # a twin request may have finished meanwhile
+        if not config.DEVICE_FUNDING:
+            return _device_required()
     c = client()
     with service._main_wallet:
         out = replay(dep_id, rid, amount, c, settle=True)
@@ -187,6 +205,8 @@ def fund(dep_id: str, amount: str, request_id: str | None = None, speculos_decis
         refused = check(rec, amount)  # again under the lock: another top-up or deployment may have used the room
         if refused:
             return refused
+        if not config.DEVICE_FUNDING:
+            return _device_required()
         main_addr = config.address("TREASURY")
         held = rlusd_balance(c, main_addr)
         if held < Decimal(amount):
@@ -195,15 +215,22 @@ def fund(dep_id: str, amount: str, request_id: str | None = None, speculos_decis
             return _refuse("device_unavailable", speculos=config.SPECULOS_URL,
                            hint="start the device (docker start speculos-xrp)")
         _remember(dep_id, rid, status="pending", amount=amount, at=_now())
-        state = {"submitting": False}
+        state = {"trustline": False, "submitting": False}
         try:
             return _finish(dep_id, rid, _approve_raise_send(rec, rid, amount, main_addr, speculos_decision, c, state))
         except Exception as e:  # report, never 500 with the outcome unknown
+            error = f"{type(e).__name__}: {e}"[:300]
             if state["submitting"]:  # the payment may be on its way: keep it pending, settle it from the ledger later
-                return _refuse("request_pending", request_id=rid, error=f"{type(e).__name__}: {e}"[:300],
-                               hash=_requests(dep_id).get(rid, {}).get("hash") if rid else None)
-            return _finish(dep_id, rid, _refuse("topup_error", error=f"{type(e).__name__}: {e}"[:300],
-                                                payment_sent=False))
+                return _refuse("request_pending", request_id=rid, error=error,
+                               hash=_requests(dep_id).get(rid, {}).get("hash"))
+            out = _refuse("topup_error", request_id=rid, error=error, payment_sent=False)
+            if state["trustline"]:  # the raise may have landed; the payment never left: limit back to the budget
+                out["trustline_restored"] = _restore_limit(dep_id, c)
+            return _finish(dep_id, rid, out)
+
+
+def _device_required() -> dict:
+    return _refuse("device_required", hint="a top-up is the owner's action on the Ledger: set CEREAL_DEVICE_FUNDING=1")
 
 
 def _approve_raise_send(rec: dict, rid: str | None, amount: str, main_addr: str, decision: str | None, c,
@@ -229,6 +256,7 @@ def _approve_raise_send(rec: dict, rid: str | None, amount: str, main_addr: str,
     _remember(dep_id, rid, hash=fund_hash, last_ledger_sequence=pay.last_ledger_sequence, approval=approval,
               budget_after=new_budget)
     # 2. raise the limit to exactly the new budget, or send nothing
+    state["trustline"] = True
     tl = multisign_submit(limit_trustset(sub, new_budget, dep_id, tag),
                           [keystore.load(dep_id), config.wallet("CEREAL_COSIGN")], c)
     if not tl.get("ok"):
@@ -244,26 +272,27 @@ def _approve_raise_send(rec: dict, rid: str | None, amount: str, main_addr: str,
             funded = {**funded, "ok": True, "result": "tesSUCCESS", "validated": True}
     if not funded.get("ok"):
         # nothing arrived: put the limit back to the budget the wallet still has (the lock's invariant), and say so
-        restored = multisign_submit(limit_trustset(sub, plain(old_budget), dep_id, tag),
-                                    [keystore.load(dep_id), config.wallet("CEREAL_COSIGN")], c)
         return _refuse("funding_failed", deployment=dep_id, requested=amount, result=funded.get("result"),
                        funding={k: funded.get(k) for k in ("result", "hash", "explorer", "validated", "message")},
-                       trustline_hash=tl["hash"], trustline_restored={k: restored.get(k) for k in ("ok", "result", "hash")},
-                       approval=approval)
+                       trustline_hash=tl["hash"], trustline_restored=_restore_limit(dep_id, c), approval=approval)
     return _record_success(dep_id, rid, amount, new_budget, funded["hash"], tl["hash"], approval, c)
 
 
 def _record_success(dep_id: str, rid: str | None, amount: str, new_budget: str, fund_hash: str, tl_hash: str | None,
                     approval: dict, c) -> dict:
+    """Record a validated top-up once: settling the same payment again (after a crash mid-record) adds nothing."""
     rec = deployments.get(dep_id)
-    entry = {"amount": amount, "hash": fund_hash, "trustline_hash": tl_hash, "at": _now(),
-             "approval": {"by": approval.get("by"), "result": approval.get("result", "approved"),
-                          "screens": approval.get("screens", [])},
-             "request_id": rid, "budget_after": new_budget}
-    deployments.update(dep_id, budget=new_budget, topups=[*(rec.get("topups") or []), entry])
+    entry = next((t for t in rec.get("topups") or [] if t.get("hash") == fund_hash), None)
+    if entry is None:
+        entry = {"amount": amount, "hash": fund_hash, "trustline_hash": tl_hash, "at": _now(),
+                 "approval": {"by": approval.get("by"), "result": approval.get("result", "approved"),
+                              "screens": approval.get("screens", [])},
+                 "request_id": rid, "budget_after": new_budget}
+        rec = deployments.update(dep_id, budget=new_budget, topups=[*(rec.get("topups") or []), entry])
     hashes = rec.get("hashes") or {}
-    rec = deployments.merge_hashes(dep_id, topup=[*(hashes.get("topup") or []), fund_hash],
-                                   topup_trustline=[*(hashes.get("topup_trustline") or []), tl_hash])
+    if fund_hash not in (hashes.get("topup") or []):
+        rec = deployments.merge_hashes(dep_id, topup=[*(hashes.get("topup") or []), fund_hash],
+                                       topup_trustline=[*(hashes.get("topup_trustline") or []), tl_hash])
     try:
         balance = str(rlusd_balance(c, rec["subwallet"]))
     except Exception:

@@ -338,22 +338,71 @@ def test_an_interrupted_request_is_settled_from_the_ledger_not_resent(led):
     assert topup.fund(rec["id"], "0.25", "crash")["replayed"]
 
 
-def test_an_interrupted_request_that_expired_is_closed_as_nothing_sent(led, monkeypatch):
+def test_an_interrupted_request_that_expired_is_closed_and_the_limit_put_back(led):
     rec = _wallet()
     deployments.update(rec["id"], fund_requests={"old": {"status": "pending", "amount": "0.25", "hash": "H",
                                                          "budget_after": "0.75", "last_ledger_sequence": 900}})
     out = topup.fund(rec["id"], "0.25", "old")
-    assert out["refused"] == "funding_failed" and out["result"] == "expired"
+    assert out["refused"] == "funding_failed" and out["result"] == "expired" and out["trustline_restored"]["ok"]
+    assert [t.limit_amount.value for t, _ in led.multisigned] == ["0.5"], "limit == budget again"
     assert deployments.get(rec["id"])["budget"] == "0.5"
-    _nothing_sent(led)
+    assert led.signed == [] and led.submitted == []
+
+
+def test_an_interrupted_request_is_settled_even_once_the_wallet_expired(led):
+    rec = _wallet(expires_at=(datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat())
+    deployments.update(rec["id"], fund_requests={"late": {"status": "pending", "amount": "0.25", "hash": "LATE",
+                                                          "trustline_hash": "TL", "budget_after": "0.75"}})
+    led.validated["LATE"] = {"validated": True, "meta": {"TransactionResult": "tesSUCCESS"}}
+    out = topup.fund(rec["id"], "0.25", "late")
+    assert out["ok"] and out["budget"] == "0.75", "the validated payment is recorded, not refused as expired"
+
+
+def test_settling_twice_records_the_payment_once(led):
+    rec = _wallet()
+    first = topup._record_success(rec["id"], "r", "0.25", "0.75", "H1", "TL1", {"by": DEV}, object())
+    again = topup._record_success(rec["id"], "r", "0.25", "0.75", "H1", "TL1", {"by": DEV}, object())
+    saved = deployments.get(rec["id"])
+    assert first["budget"] == again["budget"] == saved["budget"] == "0.75"
+    assert len(saved["topups"]) == 1 and saved["hashes"]["topup"] == ["H1"]
+
+
+def test_a_request_without_an_id_still_gets_one(led):
+    rec = _wallet()
+    out = topup.fund(rec["id"], "0.25")
+    assert out["request_id"].startswith("srv-")
+    assert deployments.get(rec["id"])["fund_requests"][out["request_id"]]["status"] == "done"
 
 
 def test_an_error_before_the_payment_is_a_result_not_a_500(led, monkeypatch):
     rec = _wallet()
-    monkeypatch.setattr(topup, "multisign_submit", lambda *a, **k: (_ for _ in ()).throw(ConnectionError("rpc down")))
+    calls = []
+
+    def down(tx, signers, c, **kw):
+        calls.append(tx.limit_amount.value)
+        raise ConnectionError("rpc down")
+    monkeypatch.setattr(topup, "multisign_submit", down)
     out = topup.fund(rec["id"], "0.25", "e")
     assert out["refused"] == "topup_error" and out["payment_sent"] is False and led.submitted == []
+    assert calls == ["0.75", "0.5"], "the raise may have landed, so the limit is put back"
     assert deployments.get(rec["id"])["fund_requests"]["e"]["status"] == "done"
+
+
+def test_an_error_while_submitting_stays_pending_for_the_ledger_to_settle(led, monkeypatch):
+    rec = _wallet()
+    monkeypatch.setattr(device, "submit_signed", lambda *a, **k: (_ for _ in ()).throw(TimeoutError("no reply")))
+    out = topup.fund(rec["id"], "0.25", "p")
+    assert out["refused"] == "request_pending" and out["hash"]
+    assert deployments.get(rec["id"])["fund_requests"]["p"]["status"] == "pending"
+    led.validated[out["hash"]] = {"validated": True, "meta": {"TransactionResult": "tesSUCCESS"}}
+    settled = topup.fund(rec["id"], "0.25", "p")
+    assert settled["ok"] and settled["hashes"]["fund"] == out["hash"] and len(led.signed) == 1
+
+
+def test_no_limit_is_recreated_on_a_wallet_that_was_reclaimed(led):
+    rec = _wallet()
+    deployments.update(rec["id"], status="reclaimed")
+    assert topup._restore_limit(rec["id"], object())["skipped"] == "wallet is reclaimed" and led.multisigned == []
 
 
 # ---- the route ------------------------------------------------------------------------------
