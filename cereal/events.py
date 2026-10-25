@@ -81,7 +81,7 @@ def feed() -> list[dict]:
                 blocked = e.get("blocked_sites") or []
                 what = (f"paid {e.get('amount')} RLUSD to {e.get('payee')}"
                         + (f" for {e['resource']}" if e.get("resource") else "")) if e.get("payee") \
-                    else "a purchase reported paid but not delivered (no matching payment)"
+                    else "a purchase reported paid but not delivered (no settled payment of this wallet matches)"
                 out.append({**who, "at": e.get("at"), "by": "cereal", "kind": "paid_not_delivered",
                             "code": "paid_not_delivered", "what": what,
                             "why": PLAIN["paid_not_delivered"],

@@ -583,6 +583,12 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
             if trust != "private":
                 return _refuse("vendor_not_credentialed", payee=tx.destination, vendor=v)
             private_site = True
+    if not private_site and rec.get("owner"):
+        # Sites: the owner's own evidence only ever narrows. A credentialed payee (or any payee with credentials off)
+        # that took this owner's money without delivering is not paid from this owner's wallets either.
+        from . import site_registry
+        if site_registry.trust_for(rec["owner"], tx.destination) == "blocked":
+            return _refuse("site_blocked", payee=tx.destination)
     if rec["allowed_payees"] and tx.destination not in rec["allowed_payees"]:  # optional narrower filter
         return _refuse("payee_not_allowed", payee=tx.destination, allowed=rec["allowed_payees"])
     amt = tx.amount
@@ -641,20 +647,23 @@ def report_event(dep_id: str, ev: EventReport) -> dict:
     entry = {"kind": ev.kind, "result": ev.result, "hash": ev.hash, "verified": verified, "detail": ev.detail,
              "at": datetime.now(timezone.utc).isoformat()}
     if ev.kind == "paid_not_delivered":
-        entry.update(_delivery_check(rec, ev.hash))
+        entry.update(_delivery_check(rec, ev.hash, settled=verified is True and ev.result == "tesSUCCESS"))
     deployments.record_event(dep_id, entry)
     return {"ok": True, **entry}
 
 
-def _delivery_check(rec: dict, tx_hash: str | None) -> dict:
-    """paid_not_delivered: the payee and resource come from cereal's own payment record for this hash, never from the
-    report, so a report can only ever block an address this wallet really paid (failing safe: it narrows, never
-    widens, what may be paid). The payment is marked undelivered; for a wallet with an owner, every site of that
-    owner paying the address is blocked (site_registry.block). The event's `verified` says what the ledger showed."""
+def _delivery_check(rec: dict, tx_hash: str | None, settled: bool) -> dict:
+    """paid_not_delivered: acted on only when the ledger shows the payment validated with tesSUCCESS (`settled`) and
+    the hash is one of this wallet's payments in cereal's own record. The payee and resource come from that record,
+    never from the report, so a report (the endpoint is tokenless) can only block an address this wallet really paid:
+    it narrows, never widens, what may be paid. The payment is marked undelivered; for a wallet with an owner, every
+    site of that owner paying the address is blocked (site_registry.block)."""
     from . import site_registry
     paid = next((p for p in rec.get("payments", []) if tx_hash and p.get("hash") == tx_hash), None)
     if not paid:
         return {"blocked_sites": [], "note": "no payment from this wallet has that hash; nothing blocked"}
+    if not settled:
+        return {"blocked_sites": [], "note": "the ledger does not show this payment settled; nothing blocked"}
     deployments.update_payment(rec["id"], tx_hash, delivered=False)
     out = {"payee": paid.get("to"), "amount": paid.get("amount"), "resource": paid.get("resource"), "blocked_sites": []}
     if rec.get("owner"):

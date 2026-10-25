@@ -64,3 +64,9 @@ class SideStore:
             with suppress(FileNotFoundError):
                 os.unlink(tmp)
             raise
+        with suppress(OSError):  # make the rename itself durable
+            dfd = os.open(target.parent, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)

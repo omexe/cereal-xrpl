@@ -32,9 +32,7 @@ def add_site(req: AddSite, request: Request) -> dict:
     if not url or len(url) > MAX_URL:
         return {"ok": False, "refused": "invalid_url", "reason": "Give a web address (http or https)."}
     probe = sites_probe.probe(url)  # reads the site and the ledger; never pays, never signs
-    if not probe.get("ok"):
-        return probe
-    return site_registry.add(user["id"], probe)
+    return site_registry.add(user["id"], probe)  # a probe refusal (invalid_url, unsafe_url) comes back as is
 
 
 @router.post("/sites/{site_id}/remove")

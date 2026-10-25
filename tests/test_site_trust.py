@@ -189,7 +189,8 @@ def test_block_blocks_every_site_of_that_owner_paying_the_address_and_nobody_els
     assert site_registry.trust_for("u_bob", D) == "private", "one owner's evidence never touches another's list"
     assert site_registry.trust_for(None, D) is None and site_registry.trust_for("u_carol", D) is None
     blocked = next(s for s in site_registry.list_for("u_alice") if s["trust"] == "blocked")
-    assert blocked["blocked_reason"] == "paid_not_delivered" and blocked["blocked_evidence"] == {"hash": "H"}
+    assert blocked["blocked_reason"] == "paid_not_delivered"
+    assert blocked["blocked_evidence"] == {"payee": D, "hash": "H"} and blocked["blocked_by"] == "paid_not_delivered"
 
 
 def test_evidence_outlives_a_re_add_and_a_new_url_paying_the_same_address(store):
@@ -197,10 +198,36 @@ def test_evidence_outlives_a_re_add_and_a_new_url_paying_the_same_address(store)
     site_registry.add("u_alice", probe_for(url, pay_to=E))
     site_registry.block("u_alice", E, "paid_not_delivered", {"hash": "H"})
     again = site_registry.add("u_alice", probe_for(url, pay_to=E))
-    assert again["refused"] == "site_blocked" and again["site"]["blocked_evidence"] == {"hash": "H"}
+    assert again["refused"] == "site_blocked" and again["site"]["blocked_evidence"]["hash"] == "H"
     other = site_registry.add("u_alice", probe_for("http://localhost:8005/other", pay_to=E))
     assert other["refused"] == "site_blocked" and other["site"]["blocked_reason"] == "paid_not_delivered"
     assert site_registry.trust_for("u_alice", E) == "blocked"
+
+
+def test_evidence_outlives_a_new_pay_to_on_the_same_url(store):
+    url = "http://localhost:8005/research/report"
+    site_registry.add("u_alice", probe_for(url, pay_to=E))
+    site_registry.block("u_alice", E, "paid_not_delivered", {"hash": "H"})
+    moved = site_registry.add("u_alice", probe_for(url, pay_to=D))  # the site now asks to be paid somewhere else
+    assert moved["refused"] == "site_blocked" and moved["site"]["payment"]["pay_to"] == D
+    assert site_registry.trust_for("u_alice", E) == "blocked", "the address that took the money stays blocked"
+    assert site_registry.trust_for("u_alice", D) == "blocked", "and so does the URL's new address"
+
+
+def test_removing_an_evidence_blocked_site_hides_it_but_keeps_the_evidence(store):
+    url = "http://localhost:8005/research/report"
+    sid = site_registry.add("u_alice", probe_for(url, pay_to=E))["site"]["id"]
+    site_registry.block("u_alice", E, "paid_not_delivered", {"hash": "H"})
+    assert site_registry.remove("u_alice", sid)
+    assert site_registry.list_for("u_alice") == [] and site_registry.get("u_alice", sid) is None
+    assert not site_registry.remove("u_alice", sid) and site_registry.update("u_alice", sid, wallets=[]) is None
+    assert site_registry.trust_for("u_alice", E) == "blocked"
+    back = site_registry.add("u_alice", probe_for(url, pay_to=E))
+    assert back["refused"] == "site_blocked" and back["site"]["id"] == sid and "removed_at" not in back["site"]
+    assert [s["id"] for s in site_registry.list_for("u_alice")] == [sid]
+    plain = site_registry.add("u_alice", probe_for("http://localhost:8004/research/report"))["site"]["id"]
+    assert site_registry.remove("u_alice", plain) and site_registry.trust_for("u_alice", D) is None, \
+        "a site without evidence is simply removed"
 
 
 def test_a_probe_block_is_about_one_url_and_is_re_evaluated(store):
@@ -211,6 +238,11 @@ def test_a_probe_block_is_about_one_url_and_is_re_evaluated(store):
     assert site_registry.trust_for("u_alice", D) == "private", "the over-cap URL does not taint the address"
     fixed = site_registry.add("u_alice", probe_for(over, price="0.5"))
     assert fixed["ok"] and fixed["site"]["trust"] == "private" and fixed["site"]["blocked_reason"] is None
+    site_registry.add("u_bob", probe_for("http://localhost:8000/swell/huge", pay_to=A, credential="valid",
+                                         verdict="block", verdict_reasons=["Above the cap."]))
+    site_registry.add("u_bob", probe_for("http://localhost:8000/swell/agenda", pay_to=A, credential="valid",
+                                         verdict="ok"))
+    assert site_registry.trust_for("u_bob", A) is None, "a public listing of the address is not blocked either"
 
 
 def test_update_and_get_are_scoped_to_the_owner(store):
@@ -350,6 +382,18 @@ def test_a_public_payee_is_unchanged_cereal_cosigns_below_the_threshold(policy):
     assert "reason" not in deployments.get(rec["id"])["payments"][0]
 
 
+def test_an_owners_evidence_blocks_even_a_credentialed_payee_for_that_owner_only(policy):
+    service, calls = policy
+    site_registry.add("u_alice", probe_for("http://localhost:8000/swell/agenda", pay_to=A, credential="valid"))
+    site_registry.block("u_alice", A, "paid_not_delivered", {"hash": "H"})
+    alice = wallet_for(payees=(A,))
+    r = service._cosign_deployment(alice, signed_payment(alice, payee=A), present=True)
+    assert r["refused"] == "site_blocked" and calls == {"device": [], "submit": [], "cosign": []}
+    for other in (wallet_for(owner="u_bob", payees=(A,)), wallet_for(owner=None, payees=(A,))):
+        assert service._cosign_deployment(other, signed_payment(other, payee=A), present=True)["ok"], \
+            "another owner's (or an unowned) wallet still pays a credentialed vendor"
+
+
 @pytest.mark.parametrize("owner_lists_it", [True, False])
 def test_a_revoked_payee_is_refused_even_on_the_owners_private_list(policy, owner_lists_it):
     service, calls = policy
@@ -461,6 +505,25 @@ def test_a_report_can_only_block_an_address_the_wallet_really_paid(store, monkey
     assert deployments.get(rec["id"])["events"][0]["kind"] == "paid_not_delivered", "still recorded"
 
 
+@pytest.mark.parametrize("ledger_says,claimed", [("tecPATH_PARTIAL", "tesSUCCESS"), ("tecPATH_PARTIAL", "tecPATH_PARTIAL"),
+                                                 (None, "tesSUCCESS")])
+def test_a_report_the_ledger_does_not_show_settled_blocks_nothing(store, monkeypatch, ledger_says, claimed):
+    from cereal import service
+
+    class Down:
+        def request(self, req):
+            raise ConnectionError("rpc down")
+    monkeypatch.setattr(service, "client", lambda: _Ledger(ledger_says) if ledger_says else Down())
+    sid = site_registry.add("u_alice", probe_for("http://localhost:8005/research/report", pay_to=E))["site"]["id"]
+    rec = _paid_wallet()
+    r = service.report_event(rec["id"], service.EventReport(kind="paid_not_delivered", result=claimed, hash="HASH1"))
+    assert r["ok"] and r["blocked_sites"] == [] and "not show this payment settled" in r["note"]
+    assert site_registry.get("u_alice", sid)["trust"] == "private"
+    assert "delivered" not in deployments.get(rec["id"])["payments"][0]
+    (e,) = [e for e in events.feed() if e["kind"] == "paid_not_delivered"]
+    assert not e["what"].startswith("paid "), "the log never claims a payment the ledger did not confirm"
+
+
 def test_a_wallet_without_an_owner_records_the_event_and_blocks_nothing(store, monkeypatch):
     from cereal import service
     monkeypatch.setattr(service, "client", lambda: _Ledger())
@@ -471,7 +534,8 @@ def test_a_wallet_without_an_owner_records_the_event_and_blocks_nothing(store, m
     assert r["ok"] and r["blocked_sites"] == [] and site_registry.get("u_alice", sid)["trust"] == "private"
 
 
-def test_buy_reports_paid_not_delivered_with_the_validated_hash(monkeypatch):
+@pytest.mark.parametrize("status,reported", [(500, True), (402, True), (200, False)])
+def test_buy_reports_paid_not_delivered_with_the_validated_hash(monkeypatch, status, reported):
     from cereal import subagent
     s = subagent.Subagent.__new__(subagent.Subagent)
     s.dep_id, s.key, s.c = "d_abc123", None, None
@@ -490,15 +554,21 @@ def test_buy_reports_paid_not_delivered_with_the_validated_hash(monkeypatch):
 
         def json(self):
             return self._b
-    seq = [R(402, body), R(500, {"error": "boom"})]
-    posts = []
-    monkeypatch.setattr(subagent.requests, "get", lambda url, **k: seq.pop(0))
+    seq = [R(402, body), R(status, {"error": "boom"})]  # a 200 here has no PAYMENT-RESPONSE header
+    posts, redirects = [], []
+    monkeypatch.setattr(subagent.requests, "get", lambda url, **k: redirects.append(k.get("allow_redirects")) or
+                        seq.pop(0))
     monkeypatch.setattr(subagent.requests, "post", lambda url, **k: posts.append((url, k.get("json"))) or
                         R(200, {"ok": True, "hash": "H", "blob": "00"}))
     monkeypatch.setattr(subagent, "_validated", lambda c, h, wait_s=30: "tesSUCCESS")
     out = s.buy("http://localhost:8005/research/report")
     assert out["ok"] is False and out["refused"] == "paid_not_served" and out["hash"] == "H"
-    url, sent = posts[-1]
+    assert redirects == [False, False], "a user-given site is never followed through a redirect"
+    reports = [(u, j) for u, j in posts if u.endswith("/events")]
+    if not reported:
+        assert reports == [], "a 200 that answered is not reported as undelivered"
+        return
+    ((url, sent),) = reports
     assert url.endswith("/subagents/d_abc123/events")
     assert sent["kind"] == "paid_not_delivered" and sent["result"] == "tesSUCCESS" and sent["hash"] == "H"
-    assert sent["detail"]["resource"] == "http://localhost:8005/research/report" and sent["detail"]["status"] == 500
+    assert sent["detail"]["resource"] == "http://localhost:8005/research/report" and sent["detail"]["status"] == status

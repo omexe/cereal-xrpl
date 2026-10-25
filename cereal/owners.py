@@ -4,14 +4,13 @@ A user is a name plus a random bearer token (only its hash is stored, next to th
 `Authorization: Bearer <token>`; the React app keeps the token in the browser (src/session.ts). This scopes sites and
 the wallets bought for them to one user; it is not yet full account security (checklist R05).
 
-Store: <records stem>.users.json, {"u_<hex>": {"id", "name", "token_sha256", "created_at"}}, written atomically under
-a machine-wide lock (cereal/sidestore.py). The token itself is never stored, logged or returned again after
-create_session.
+Store: <records stem>.users.json, {"users": {"u_<hex>": {"id", "name", "created_at"}}, "tokens": {"<sha256>": "u_<hex>"}},
+written atomically under a machine-wide lock (cereal/sidestore.py). The token itself is never stored, logged or
+returned again after create_session; a request's token is found by its hash (one dict lookup, no scan).
 """
 from __future__ import annotations
 
 import hashlib
-import hmac
 import secrets
 import unicodedata
 from datetime import datetime, timezone
@@ -49,13 +48,14 @@ def create_session(name: str) -> dict:
         return {"ok": False, "refused": "invalid_name", "problem": why, "limit": MAX_NAME}
     token = secrets.token_urlsafe(32)
     with _store.locked():
-        users = _store.load()
+        data = _store.load()
+        users, tokens = data.setdefault("users", {}), data.setdefault("tokens", {})
         uid = "u_" + secrets.token_hex(8)
         while uid in users:
             uid = "u_" + secrets.token_hex(8)
-        users[uid] = {"id": uid, "name": clean, "token_sha256": _hash(token),
-                      "created_at": datetime.now(timezone.utc).isoformat()}
-        _store.save(users)
+        users[uid] = {"id": uid, "name": clean, "created_at": datetime.now(timezone.utc).isoformat()}
+        tokens[_hash(token)] = uid
+        _store.save(data)
     return {"ok": True, "user": {"id": uid, "name": clean}, "token": token}
 
 
@@ -63,17 +63,15 @@ def user_for_token(token: str | None) -> dict | None:
     """{id, name} for a valid token, else None."""
     if not isinstance(token, str) or not token:
         return None
-    want = _hash(token)
-    found = None
-    for u in _store.load().values():  # compare every entry in constant time; no early exit on a match
-        if hmac.compare_digest(str(u.get("token_sha256", "")), want):
-            found = u
-    return _public(found) if found else None
+    data = _store.load()
+    uid = data.get("tokens", {}).get(_hash(token))  # keyed by the sha256 of a 256-bit random token
+    u = data.get("users", {}).get(uid) if uid else None
+    return _public(u) if u else None
 
 
 def get(user_id: str | None) -> dict | None:
     """{id, name} of a known user, else None."""
-    u = _store.load().get(user_id) if user_id else None
+    u = _store.load().get("users", {}).get(user_id) if user_id else None
     return _public(u) if u else None
 
 
