@@ -6,6 +6,8 @@ import {
 import type { Vendor } from '../api';
 import { explorerAccount, formatAmount, shortAddress } from '../format';
 import { ACTIVE_STATUSES } from '../live';
+import type { DemoPayment } from '../researchDemo';
+import { PaymentRequest, paymentLabel } from './PaymentRequest';
 import type { Wallet } from '../wallets';
 
 const money = (amount: number | string | null | undefined) => formatAmount(amount);
@@ -14,6 +16,7 @@ const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', 
 
 interface Props {
   wallet: Wallet;
+  payments?: DemoPayment[];
   onAddFunds: () => void;
   onEditConstraints: () => void;
   onRestore: () => void;
@@ -27,8 +30,7 @@ export function WalletDetail(props: Props) {
   return props.wallet.live ? <LiveWalletDetail {...props} /> : <MockWalletDetail {...props} />;
 }
 
-/** The original browser-only demo (VITE_CEREAL_MODE=mock), unchanged. */
-function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, actions }: Props) {
+function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, payments = [] }: Props) {
   const transactions = [...(wallet.transactions ?? [])].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   const merchants = [...new Set(transactions.map(transaction => transaction.merchant))];
   const groups = merchants.map((merchant, index) => ({
@@ -37,19 +39,23 @@ function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, ac
   }));
   const spent = groups.reduce((sum, group) => sum + group.amount, 0);
   const scale = Math.max(spent, wallet.constraints.spend);
+  const activity = [
+    ...transactions.map(transaction => ({ id: transaction.id, at: transaction.timestamp, transaction, payment: payments.find(payment => payment.id === transaction.id) })),
+    ...payments.filter(payment => payment.status !== 'paid').map(payment => ({ id: payment.id, at: payment.createdAt, transaction: undefined, payment })),
+  ].sort((a, b) => Number(b.payment?.status === 'pending') - Number(a.payment?.status === 'pending') || Date.parse(b.at) - Date.parse(a.at));
   return <article className="wallet-detail" aria-label={`${wallet.name} wallet details`}>
-    <section className="budget" aria-label="Demo spending breakdown">
+    <section className="budget" aria-label="Spending breakdown">
       <div className="budget-label">
         <h1>{wallet.name}</h1>
-        <div className="budget-actions"><span className="budget-used" title="Demo spending / spending limit">{`${money(spent)} / ${money(wallet.constraints.spend)}`}</span>
-          <button className="primary-button" disabled={wallet.archived} onClick={onAddFunds}>Add funds</button>
+        <div className="budget-actions"><span className="budget-used" title="Spending / spending limit">{money(spent)} / {money(wallet.constraints.spend)}</span>
+          <button className="primary-button" disabled={wallet.archived || !!wallet.demoClosedAt} onClick={onAddFunds}>Add funds</button>
         </div>
       </div>
-      <div className="budget-track" role="img" aria-label={`${money(spent)} in demo spending out of a ${money(wallet.constraints.spend)} limit`}>
+      <div className="budget-track" role="img" aria-label={`${money(spent)} spent out of a ${money(wallet.constraints.spend)} limit`}>
         {groups.map(group => <span key={group.merchant} className="budget-segment" style={{ width: `${group.amount / scale * 100}%`, background: group.color }} />)}
       </div>
       <div className="budget-legend">{groups.map(group => <span key={group.merchant}><i style={{ background: group.color }} />{group.merchant}</span>)}
-        {!groups.length && <span>No demo spending yet</span>}
+        {!groups.length && <span>No spending yet</span>}
         {spent > wallet.constraints.spend && <span className="budget-over-limit">Over spending limit</span>}
       </div>
     </section>
@@ -57,28 +63,33 @@ function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, ac
       <h2 id="constraint-heading">{wallet.archived ? 'Archived wallet · Spending rules' : 'Spending rules'}</h2>
       {wallet.description && <p className="wallet-description">{wallet.description}</p>}
       <p className="constraints">
-        Spend up to <button disabled={wallet.archived} onClick={onEditConstraints}>{`$${wallet.constraints.spend}`}</button> over <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.days} {wallet.constraints.days === 1 ? 'day' : 'days'}</button>, only at{' '}
+        Spend up to <button disabled={wallet.archived} onClick={onEditConstraints}>${wallet.constraints.spend}</button> over <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.days} {wallet.constraints.days === 1 ? 'day' : 'days'}</button>, only at{' '}
         {wallet.constraints.merchants.map((merchant, index, list) => <span key={`${merchant}-${index}`}>
           <button disabled={wallet.archived} onClick={onEditConstraints}>{merchant}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : '. '}
         </span>)}
-        Ask me <button disabled={wallet.archived} onClick={onEditConstraints}>above {`$${wallet.constraints.approval}`}</button>. <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
+        Ask me <button disabled={wallet.archived} onClick={onEditConstraints}>above ${wallet.constraints.approval}</button>. <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
       </p>
+      {wallet.demoClosedAt && <p className="demo-note">${(wallet.demoReturnedBalance ?? 0).toFixed(2)} returned to the demo treasury. Wallet closed after research.</p>}
       {wallet.archived && <button className="text-button restore" onClick={onRestore}>Restore wallet</button>}
-      {actions}
     </section>
     <div className="wallet-activity">
       <div className="activity-illustration"><img src="/assets/wallet-activity-organism.svg" width="356" height="406" alt="" /></div>
       <section className="transactions" aria-labelledby="transactions-heading">
-        <header><span>Demo activity</span><h2 id="transactions-heading">Transactions</h2></header>
-        <div className="transaction-list" tabIndex={transactions.length ? 0 : undefined} role="region" aria-label="Demo transactions">
-          {transactions.map(transaction => <article className="transaction-card" key={transaction.id}>
-            <div className="transaction-main"><h3>{transaction.title}</h3>
-              <span className="transaction-merchant" style={{ '--merchant-color': groups.find(group => group.merchant === transaction.merchant)?.color } as CSSProperties}><i />{transaction.merchant}</span>
-              <span className="transaction-amount">{money(transaction.amount)}</span>
-            </div>
-            <div className="transaction-meta"><span>{transaction.durationSeconds}s</span><time dateTime={transaction.timestamp} title={`${date.format(new Date(transaction.timestamp))}, ${time.format(new Date(transaction.timestamp))} ET`}>{date.format(new Date(transaction.timestamp))} · {time.format(new Date(transaction.timestamp))} ET</time></div>
-          </article>)}
-          {!transactions.length && <p className="transaction-empty">No transactions for this wallet yet.</p>}
+        <header><span>Activity</span><h2 id="transactions-heading">Transactions</h2></header>
+        <div className="transaction-list" tabIndex={transactions.length || payments.length ? 0 : undefined} role="region" aria-label="Transactions">
+          {activity.map(entry => {
+            if (!entry.transaction) return <PaymentRequest key={entry.id} payment={entry.payment!} />;
+            const transaction = entry.transaction;
+            return <article className="transaction-card" key={entry.id}>
+              <div className="transaction-main"><h3>{transaction.title}</h3>
+                <span className="transaction-merchant" style={{ '--merchant-color': groups.find(group => group.merchant === transaction.merchant)?.color } as CSSProperties}><i />{transaction.merchant}</span>
+                <span className="transaction-amount">{money(transaction.amount)}</span>
+              </div>
+              <div className="transaction-meta"><span>{transaction.durationSeconds}s</span><time dateTime={transaction.timestamp} title={`${date.format(new Date(transaction.timestamp))}, ${time.format(new Date(transaction.timestamp))} ET`}>{date.format(new Date(transaction.timestamp))} · {time.format(new Date(transaction.timestamp))} ET</time></div>
+              {entry.payment && <p className="payment-reason"><span className="payment-badge paid">{paymentLabel(entry.payment)}</span></p>}
+            </article>;
+          })}
+          {!transactions.length && !payments.length && <p className="transaction-empty">No transactions for this wallet yet.</p>}
         </div>
       </section>
     </div>

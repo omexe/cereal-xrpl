@@ -13,20 +13,21 @@ import { formatAmount } from './format';
 import { isActive } from './live';
 import { isLive } from './mode';
 import { useLiveData } from './store';
-import { loadWorkspace, parseConstraints, STORAGE_KEY, type Wallet, type Workspace } from './wallets';
+import { parseConstraints, type Wallet } from './wallets';
+import { useWorkspace } from './workspaceStore';
 
 type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | null;
-const emptyWorkspace: Workspace = { wallets: [], folders: [] };
 
 export default function App() {
   // Live mode never loads or seeds the mock workspace; every wallet comes from the cereal service.
-  const [mockWorkspace, setWorkspace] = useState<Workspace>(() => isLive ? emptyWorkspace : loadWorkspace());
-  const [selectedId, setSelectedId] = useState(() => mockWorkspace.wallets.find(w => !w.archived)?.id);
+  const { workspace: mockWorkspace, setWorkspace, error: storageError } = useWorkspace(!isLive);
+  const query = new URLSearchParams(window.location.search);
+  const [selectedId, setSelectedId] = useState(() => query.get('wallet') ?? mockWorkspace.wallets.find(w => !w.archived)?.id);
   const live = useLiveData(isLive, selectedId);
   const workspace = isLive ? live.workspace : mockWorkspace;
-  const [activeView, setActiveView] = useState<'home' | 'wallet'>('home');
+  const [activeView, setActiveView] = useState<'home' | 'wallet'>(query.has('wallet') ? 'wallet' : 'home');
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['research-2']);
-  const [modal, setModal] = useState<Modal>(null);
+  const [modal, setModal] = useState<Modal>(query.get('setup') === 'research' || query.get('settings') === 'demo' ? 'settings' : null);
   const [mobileNav, setMobileNav] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [walletDescription, setWalletDescription] = useState('');
@@ -50,11 +51,6 @@ export default function App() {
   const editable = !!selected && !selected.archived && isActive(selected);
 
   useEffect(() => {
-    if (isLive) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(mockWorkspace)); }
-    catch { setMessage('Changes are available for this session. Browser storage is unavailable.'); }
-  }, [mockWorkspace]);
-  useEffect(() => {
     if (!message || promptError || messageError) return;
     const timer = window.setTimeout(() => setMessage(''), 5000);
     return () => clearTimeout(timer);
@@ -76,7 +72,7 @@ export default function App() {
     setPrompt(''); setPromptError(false); notify('');
   }
   function updateWallet(id: string, update: Partial<Wallet>) {
-    setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === id ? { ...w, ...update } : w) }));
+    return setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === id ? { ...w, ...update } : w) }));
   }
   function openConstraints() { if (selected) { setRulesSentence(''); setModal('constraints'); } }
   function openFunds() {
@@ -93,7 +89,7 @@ export default function App() {
       } catch (e) { notify(describeError(e), true); }
       return;
     }
-    updateWallet(selected.id, { archived: !selected.archived });
+    if (!await updateWallet(selected.id, { archived: !selected.archived })) return;
     if (!selected.archived) setSelectedId(activeWallets.find(w => w.id !== selected.id)?.id);
     notify(selected.archived ? 'Wallet restored.' : 'Wallet archived.'); setModal(null);
   }
@@ -112,7 +108,7 @@ export default function App() {
       } catch (e) { notify(describeError(e), true); }
       return;
     }
-    setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(wallet => wallet.id === id ? { ...wallet, folderId } : wallet) }));
+    if (!await setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(wallet => wallet.id === id ? { ...wallet, folderId } : wallet) }))) return;
     setPromptError(false);
     notify(`Wallet moved to ${folder?.name ?? 'Disposable Wallets'}.`);
   }
@@ -140,7 +136,7 @@ export default function App() {
       },
     };
   }
-  function applyPrompt(event: FormEvent) {
+  async function applyPrompt(event: FormEvent) {
     event.preventDefault();
     if (isHome) {
       if (!prompt.trim()) return;
@@ -155,7 +151,8 @@ export default function App() {
       notify('Try: Spend up to $20 over 2 days, only at HubSpot, Clearbit and Apollo. Ask me above $5. Sweep back when done.');
       return;
     }
-    updateWallet(selected.id, { constraints }); setPrompt(''); setPromptError(false); notify('Demo wallet constraints updated.');
+    if (!await updateWallet(selected.id, { constraints })) return;
+    setPrompt(''); setPromptError(false); notify('Wallet constraints updated.');
   }
   function walletRow(wallet: Wallet, nested = false) {
     const finished = !isActive(wallet);
@@ -189,6 +186,7 @@ export default function App() {
         <button aria-current={activeNavigation === 'settings' ? 'true' : undefined} onClick={() => setModal('settings')}><Settings01 /><span>Settings</span></button>
         <button aria-current={activeNavigation === 'new-wallet' ? 'true' : undefined} onClick={() => { setWalletDescription(''); setModal('wallet'); }}><Plus /><span>New Wallet</span></button>
       </nav>
+      {(workspace.demoPayments ?? []).some(payment => payment.status === 'pending') && <button className="approval-nav" onClick={() => { const payment = workspace.demoPayments?.find(item => item.status === 'pending'); if (payment) selectWallet(payment.walletId); }}>Approval needed <span>{workspace.demoPayments?.filter(item => item.status === 'pending').length}</span></button>}
       <section className="sidebar-section">
         <div className="section-heading muted"><span>Folders</span><button className="icon-button small" aria-label="New folder" onClick={() => setModal('folder')}><Plus /></button></div>
         {workspace.folders.map(folder => {
@@ -226,6 +224,7 @@ export default function App() {
         </div>}
         <div className="home-illustration"><img src="/assets/home-organism.svg" width="640" height="620" alt="" /></div>
       </section> : selected ? <WalletDetail wallet={selected} onAddFunds={openFunds} onEditConstraints={openConstraints} onRestore={toggleArchive}
+          payments={(workspace.demoPayments ?? []).filter(payment => payment.walletId === selected.id)}
           vendors={live.vendors}
           actions={<WalletActions app={app} wallet={selected} />} />
         : <div className="empty-details"><h1>Create a wallet<br />for your next task.</h1><button className="primary-button" onClick={() => setModal('wallet')}>Create a wallet</button></div>}
@@ -233,7 +232,7 @@ export default function App() {
 
       </div>
       <footer className="composer">
-      <p id="status-message" role={promptError || messageError ? 'alert' : 'status'} className={`status-message ${promptError || messageError ? 'error' : ''}`}>{message}</p>
+      <p id="status-message" role={promptError || messageError || storageError ? 'alert' : 'status'} className={`status-message ${promptError || messageError || storageError ? 'error' : ''}`}>{storageError || message}</p>
       <form className="prompt-form" onSubmit={applyPrompt}>
         <input aria-label={isHome ? 'Describe a new wallet in plain English' : 'Edit wallet spending rules'} aria-invalid={promptError} aria-describedby={promptError ? 'status-message' : undefined}
           placeholder={isHome ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected && !editable ? 'This wallet is finished; its rules no longer change' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!isHome && !editable}

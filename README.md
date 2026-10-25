@@ -6,15 +6,16 @@ built at the AI & Fintech XRPL Hackathon, New York, Oct 24–25 2026.
 
 ## React wallet screen
 
-The Figma home and wallet activity screens are implemented in [`frontend/`](frontend/README.md), with mock balances, spending rules, and transaction history.
+The Figma home and wallet activity screens are implemented in [`frontend/`](frontend/README.md), with live testnet and local simulation modes.
 
 ```bash
 cd frontend
 npm ci
-npm run dev
+npm run dev        # live: requires the cereal service
+npm run dev:mock   # local wallet and chat simulation
 ```
 
-This frontend uses local demo data; it is not connected to the Python payment flows yet.
+Live mode connects to the Python cereal service; see the frontend README for setup. In mock mode, the separate [research chat demo](docs/RESEARCH-CHAT-DEMO.md) at `/demo-chat` sends simulated payment requests to Cereal’s existing owner-configured wallets, including automatic payments, fraud blocks, and owner approvals across browser windows. Launch it from **Settings → Developer tools**, then name the wallet to use in the chat prompt.
 
 ## quickstart (5 minutes)
 

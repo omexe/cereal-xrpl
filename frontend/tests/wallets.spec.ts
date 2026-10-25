@@ -73,6 +73,7 @@ test('home creates a wallet from a description, then archive and restore preserv
   await expect(page.getByRole('button', { name: 'Add funds', exact: true })).toBeDisabled();
   await expect(page.getByRole('textbox', { name: 'Edit wallet spending rules' })).toBeDisabled();
   await page.getByRole('button', { name: 'Restore wallet', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Add funds', exact: true })).toBeEnabled();
   await page.reload();
   await page.getByRole('button', { name: '+ 3 more', exact: true }).click();
   await page.getByRole('button', { name: 'Open Launch research', exact: true }).click();

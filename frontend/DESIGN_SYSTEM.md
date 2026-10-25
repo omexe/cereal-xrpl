@@ -78,5 +78,12 @@ Agentation mounts at the React root only when `import.meta.env.DEV` is true. The
 - Rules use `--font-rules` (Aspekta 500, 36px / 1.15, tracking -.54px; 24px / 1.3 on mobile). Transaction titles use `--font-transaction` (Aspekta 500, 16px / 1.3); mobile uses Body.
 - The 356 × 406 illustration from `27:2389` is displayed at its original aspect ratio. It is decorative and is not a count of active wallets.
 - Merchant colors reuse the three chart tokens consistently in the bar, legend, and transaction labels. Bar widths derive from each merchant's transaction total divided by the greater of the spending limit or total spending.
-- The transaction list has a bounded desktop scroll area and expands on mobile. Its sample records are labeled Demo activity.
+- The transaction list has a bounded desktop scroll area and expands on mobile. The transaction section is labelled Activity; simulation details live in Settings.
 - The wallet composer uses the shared Composer role and keeps the previously removed decorative caret absent.
+
+## Research chat demo
+
+- `/demo-chat` is a separate dark tool, with a full-height sidebar, a scrolling conversation, and a bottom composer. It uses the existing typography roles and official Untitled UI icons; it has no policy editing controls.
+- Dark surfaces and text use the shared `--color-chat-*` palette in `tokens.css`. The success, warning, and danger roles describe payment outcomes. Matching light feedback roles (`--color-success`, `--color-warning`, and their soft surfaces) support Cereal’s approval inbox.
+- Every wallet keeps the standard illustration, spending rules, budget bar, and transaction list. Payment requests use the same transaction-card layout, with pending approvals first. Blocked and denied requests explicitly say they were not charged. The list is labelled Activity; launch and reset controls live only in Settings → Developer tools.
+- The Demo badge and simulation notes remain visible. Chat source cards mark public URLs as simulated visits and paid vendors as fictional sources. Motion is limited to the normal browser UI; source progress does not rely on animation.

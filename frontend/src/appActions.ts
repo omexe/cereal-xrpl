@@ -1,4 +1,4 @@
-import type { Dispatch, SetStateAction } from 'react';
+import type { SetStateAction } from 'react';
 import type { LiveData } from './store';
 import type { Wallet, Workspace } from './wallets';
 
@@ -14,9 +14,9 @@ export interface AppActions {
   isHome: boolean;
   live: LiveData;
   /** mock mode only */
-  setWorkspace: Dispatch<SetStateAction<Workspace>>;
+  setWorkspace: (update: SetStateAction<Workspace>) => Promise<Workspace | undefined>;
   /** mock mode only: merge fields into one wallet */
-  updateWallet: (id: string, update: Partial<Wallet>) => void;
+  updateWallet: (id: string, update: Partial<Wallet>) => Promise<Workspace | undefined>;
   /** Open a wallet's view (after creating it). */
   showWallet: (id: string, folderId?: string) => void;
   moveWallet: (id: string, folderId?: string) => void;
