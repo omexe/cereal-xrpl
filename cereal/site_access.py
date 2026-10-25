@@ -148,7 +148,8 @@ def open_free(owner: dict, site: dict) -> dict:
     else:
         return _refuse("not_accessible", url=url, status=resp.status_code, content_type=ctype,
                        reason=f"not a text page ({ctype})")
-    truncated = len(text) > MAX_TEXT_CHARS or len(raw) >= MAX_PAGE_BYTES
+    cut = getattr(resp, "truncated", None)  # safe_get says whether it cut the body at max_bytes
+    truncated = len(text) > MAX_TEXT_CHARS or bool(cut if cut is not None else len(raw) >= MAX_PAGE_BYTES)
     return {"ok": True, "url": url, "status": resp.status_code, "content_type": ctype or None,
             "title": title, "text": text[:MAX_TEXT_CHARS], "truncated": truncated, "bytes": len(raw)}
 
