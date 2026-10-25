@@ -28,8 +28,30 @@ MEMO_TYPE = "cereal/job"
 RESULT_RE = re.compile(r"\b(te[cfmlr][A-Z_]+)")
 
 
+class FailoverClient(JsonRpcClient):
+    """JSON-RPC that moves to the next testnet server when one is overloaded (503), times out or drops the connection.
+    Resending a request elsewhere is safe: reads are idempotent, and a signed transaction has one hash wherever it lands."""
+
+    def __init__(self, urls: list[str]):
+        super().__init__(urls[0])
+        self.urls = urls
+
+    async def _request_impl(self, request, **kwargs):
+        from httpx import HTTPError
+        from xrpl.asyncio.clients.exceptions import XRPLRequestFailureException
+        kwargs.setdefault("timeout", 6)  # three slow servers must still answer inside the app's own wait
+        last: Exception | None = None
+        for url in [self.url] + [u for u in self.urls if u != self.url]:
+            self.url = url
+            try:
+                return await super()._request_impl(request, **kwargs)
+            except (HTTPError, XRPLRequestFailureException, ValueError, KeyError) as e:  # an empty, HTML or rate-limit body
+                last = e
+        raise last  # type: ignore[misc]
+
+
 def client() -> JsonRpcClient:
-    return JsonRpcClient(config.RPC_URL)
+    return FailoverClient(config.RPC_FALLBACKS)
 
 
 def ledger_index(c: JsonRpcClient) -> int:

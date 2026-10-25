@@ -11,6 +11,11 @@ ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
 
 RPC_URL = os.getenv("QUICKNODE_XRPL_HTTP") or os.getenv("XRPL_TESTNET_RPC_URL") or "https://s.altnet.rippletest.net:51234/"
+# Public testnet servers tried in order when the one above is overloaded or unreachable (hackathon load).
+RPC_FALLBACKS = [u for u in [RPC_URL] + [x.strip() for x in os.getenv("XRPL_TESTNET_RPC_FALLBACKS",
+    "https://testnet.xrpl-labs.com/,https://s.altnet.rippletest.net:51234/,https://clio.altnet.rippletest.net:51234/").split(",")]
+    if u]
+RPC_FALLBACKS = list(dict.fromkeys(RPC_FALLBACKS))
 WS_URL = os.getenv("QUICKNODE_XRPL_WS") or os.getenv("XRPL_TESTNET_WS_URL") or "wss://s.altnet.rippletest.net:51233"
 EXPLORER = "https://testnet.xrpl.org"
 SOURCE_TAG = int(os.getenv("CEREAL_SOURCE_TAG", "2610250032"))  # the hackathon's XRPL source tag (XRPL Commons, NYC)
