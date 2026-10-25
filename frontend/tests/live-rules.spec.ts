@@ -59,6 +59,7 @@ test('a blue rule button edits the threshold and the merchant list', async ({ pa
   await expect(rules).toContainText('above 0.20 RLUSD');
   await rules.getByRole('button').first().click();
   const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Edit the fields instead' }).click();
   await expect(dialog.getByRole('checkbox', { name: /Vendor B/ })).toBeDisabled();  // revoked: never addable
   await expect(dialog).toContainText('Revoked');
   await dialog.getByLabel('Ask for approval above (RLUSD)').fill('0.1');
@@ -84,6 +85,7 @@ test('lowering the spend limit returns the excess on-ledger', async ({ page }) =
   await openWallet(page);
   await page.locator('.constraints').getByRole('button').first().click();
   const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Edit the fields instead' }).click();
   await dialog.getByLabel('Spend limit (RLUSD)').fill('0.4');
   await dialog.getByRole('button', { name: 'Preview changes' }).click();
   await expect(dialog.locator('.rules-preview')).toContainText('Spend limit 0.6 → 0.4 RLUSD; 0.2 RLUSD returns to the main wallet now');
@@ -112,6 +114,7 @@ test('raising the spend limit is refused: only Add funds adds money', async ({ p
   await openWallet(page);
   await page.locator('.constraints').getByRole('button').first().click();
   const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Edit the fields instead' }).click();
   await dialog.getByLabel('Spend limit (RLUSD)').fill('2');
   await dialog.getByRole('button', { name: 'Preview changes' }).click();
   await expect(dialog.locator('.rules-problems')).toContainText('Only Add funds can raise a wallet\'s budget');

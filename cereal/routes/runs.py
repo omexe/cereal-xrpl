@@ -1,7 +1,7 @@
 """A01, A02, A07: start a wallet's task from the API and track the run (the logic and its cleanup policy: cereal/runs.py).
 
 Contract (frontend/src/api.ts):
-    POST /subagents/{id}/run  {}            → {ok, run: Run} | refusal (not_active, expired, already_running,
+    POST /subagents/{id}/run  {task?, request_id?, keep_open?}            → {ok, run: Run} | refusal (not_active, expired, already_running,
                                               balance_unavailable, nothing_to_buy, already_bought,
                                               no_trusted_vendor, over_budget)
     GET  /subagents/{id}/run                → {ok, run: Run | null}
@@ -10,14 +10,22 @@ Contract (frontend/src/api.ts):
 Creating a wallet never starts its task; only this endpoint does.
 """
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter()
 
 
+class RunRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    keep_open: bool = False
+    task: str | None = Field(default=None, min_length=1, max_length=4000)
+    request_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 @router.post("/subagents/{dep_id}/run")
-def start_run(dep_id: str) -> dict:
+def start_run(dep_id: str, body: RunRequest | None = None) -> dict:
     from .. import runs
-    out = runs.start(dep_id)
+    out = runs.start(dep_id, task=body.task if body else None, request_id=body.request_id if body else None, keep_open=body.keep_open if body else False)
     if out.get("refused") == "unknown_deployment":
         raise HTTPException(404, "unknown deployment")
     return out

@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from decimal import Decimal
 
 import requests
@@ -83,6 +84,14 @@ class Subagent:
                "hash": co["hash"], "approved_by": co.get("approved_by"),
                "explorer": f"{config.EXPLORER}/transactions/{co['hash']}", "data": _body(paid) if ok else None,
                "settlement": settlement}
+        # Persist only the public research document fields, never payment headers or arbitrary response metadata.
+        document = (out.get("data") or {}).get("data") if isinstance(out.get("data"), dict) else None
+        if ok and isinstance(document, dict) and isinstance(document.get("title"), str):
+            emit("resource_received", {"resource": url, "hash": co["hash"],
+                 "title": document["title"][:200], "summary": str(document.get("summary", ""))[:4000],
+                 "sample": document.get("sample") is True,
+                 "findings": [f[:2000] for f in document.get("findings", [])[:20] if isinstance(f, str)]
+                 if isinstance(document.get("findings"), list) else []})
         if retried:
             out["retried_after_409"] = True
         if not ok:
@@ -99,7 +108,7 @@ class Subagent:
 
     def done(self, summary: str) -> dict:
         """Report that my task is finished, with a one-line summary."""
-        return requests.post(f"{config.SERVICE_URL}/subagents/{self.dep_id}/done", json={"summary": summary},
+        return requests.post(f"{config.SERVICE_URL}/subagents/{self.dep_id}/done", json={"summary": summary, "run_id": os.getenv("CEREAL_RUN_ID")},
                              timeout=30).json()
 
     def prove_lock(self) -> dict:

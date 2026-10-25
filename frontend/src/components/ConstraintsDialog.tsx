@@ -11,35 +11,69 @@ import { Dialog } from './Dialog';
  * Mock: browser state. Live: preview, then apply on the backend (sentence = the composer's text, if any). */
 export function ConstraintsDialog({ app, sentence }: { app: AppActions; sentence?: string }) {
   const selected = app.selected!;
-  if (!isLive) return <MockConstraints app={app} />;
+  if (!isLive) return <MockConstraints app={app} sentence={sentence} />;
   if (selected.live) return <LiveConstraints app={app} wallet={selected} live={selected.live} sentence={sentence} />;
   return <Dialog title="Spending rules" onClose={app.close}>
     <p className="dialog-description">This wallet has not loaded from the cereal service yet. Nothing was changed.</p>
   </Dialog>;
 }
 
-function MockConstraints({ app }: { app: AppActions }) {
+function MockConstraints({ app, sentence }: { app: AppActions; sentence?: string }) {
   const selected = app.selected!;
   const [draftConstraints, setDraftConstraints] = useState<Constraints>(() => ({ ...selected.constraints }));
+  const [mode, setMode] = useState<'sentence' | 'fields'>('sentence');
+  const [text, setText] = useState(sentence ?? '');
+  const [previewText, setPreviewText] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const started = useRef(false);
+  async function preview() {
+    setBusy(true); setError(''); setPreviewText(undefined);
+    try {
+      const out = await api.previewDemoRules(text, selected.name, selected.constraints);
+      if (out.ok && out.constraints) { setDraftConstraints(out.constraints); setPreviewText(text); }
+      else setError(out.problems.join(' '));
+    } catch (err) { setError(describeError(err)); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => {
+    if (started.current || !sentence) return;
+    started.current = true; void preview();
+  }, []);
   return <Dialog title="Wallet constraints" onClose={app.close}><form onSubmit={async event => {
-    event.preventDefault(); if (selected.archived) return;
-    const data = new FormData(event.currentTarget);
-    const merchants = String(data.get('merchants')).split(',').map(m => m.trim()).filter(Boolean);
+    event.preventDefault();
+    if (selected.archived || busy || (mode === 'sentence' && previewText !== text)) return;
+    const merchants = mode === 'fields'
+      ? String(new FormData(event.currentTarget).get('merchants')).split(',').map(m => m.trim()).filter(Boolean)
+      : draftConstraints.merchants;
     if (!merchants.length) return;
-    if (!await app.updateWallet(selected.id, { constraints: { ...draftConstraints, merchants } })) return; app.close(); app.notify('Demo wallet constraints updated.');
-  }}><p className="dialog-description">Set spending rules for {selected.name}. Rules are saved for this demo; no payments are executed.</p>
-    <div className="form-grid"><label>Spend limit ($)<input type="number" min="0.01" step="0.01" required value={draftConstraints.spend} onChange={e => setDraftConstraints({ ...draftConstraints, spend: +e.target.value })} autoFocus /></label>
-    <label>Duration (days)<input type="number" min="1" max="365" step="1" required value={draftConstraints.days} onChange={e => setDraftConstraints({ ...draftConstraints, days: +e.target.value })} /></label></div>
-    <label>Allowed merchants<input name="merchants" required defaultValue={draftConstraints.merchants.join(', ')} /></label>
-    <label>Ask for approval above ($)<input type="number" min="0" step="0.01" required value={draftConstraints.approval} onChange={e => setDraftConstraints({ ...draftConstraints, approval: +e.target.value })} /></label>
-    <label className="checkbox-label"><input type="checkbox" checked={draftConstraints.sweep} onChange={e => setDraftConstraints({ ...draftConstraints, sweep: e.target.checked })} />Sweep back when done</label>
-    <button className="primary-button form-submit" disabled={selected.archived}>Save constraints</button>
+    if (!await app.updateWallet(selected.id, { constraints: { ...draftConstraints, merchants } })) return;
+    app.close(); app.notify('Demo wallet constraints updated.');
+  }}><p className="dialog-description">Describe how to change the rules for {selected.name}. AI proposes the edit for you to review. Rules are saved for this demo; no payments are executed.</p>
+    {mode === 'sentence' ? <>
+      <label>Requested change<textarea value={text} maxLength={1000} disabled={busy} onChange={e => setText(e.target.value)} autoFocus
+        placeholder="e.g. Halve my approval threshold and keep the remaining funds." /></label>
+      <button type="button" className="text-button rules-switch" disabled={busy} onClick={() => { setMode('fields'); setError(''); }}>Edit the fields instead</button>
+      <button type="button" className="secondary-button" disabled={!text.trim() || busy} onClick={() => void preview()}>{busy ? 'Understanding…' : 'Preview changes'}</button>
+      {previewText === text && <section className="rules-preview" aria-label="Preview of the change" aria-live="polite">
+        <p>Spend up to ${draftConstraints.spend} over {draftConstraints.days} days, only at {draftConstraints.merchants.join(', ')}. Ask me above ${draftConstraints.approval}. {draftConstraints.sweep ? 'Sweep back' : 'Keep funds'} when done.</p>
+      </section>}
+    </> : <>
+      <div className="form-grid"><label>Spend limit ($)<input type="number" min="0.01" step="0.01" required value={draftConstraints.spend} onChange={e => setDraftConstraints({ ...draftConstraints, spend: +e.target.value })} autoFocus /></label>
+      <label>Duration (days)<input type="number" min="1" max="365" step="1" required value={draftConstraints.days} onChange={e => setDraftConstraints({ ...draftConstraints, days: +e.target.value })} /></label></div>
+      <label>Allowed merchants<input name="merchants" required defaultValue={draftConstraints.merchants.join(', ')} /></label>
+      <label>Ask for approval above ($)<input type="number" min="0" step="0.01" required value={draftConstraints.approval} onChange={e => setDraftConstraints({ ...draftConstraints, approval: +e.target.value })} /></label>
+      <label className="checkbox-label"><input type="checkbox" checked={draftConstraints.sweep} onChange={e => setDraftConstraints({ ...draftConstraints, sweep: e.target.checked })} />Sweep back when done</label>
+      <button type="button" className="text-button rules-switch" onClick={() => { setMode('sentence'); setPreviewText(undefined); }}>Describe a change with AI</button>
+    </>}
+    {error && <p role="alert">{error}</p>}
+    <button className="primary-button form-submit" disabled={selected.archived || busy || (mode === 'sentence' && previewText !== text)}>Save constraints</button>
   </form></Dialog>;
 }
 
 interface RulesForm { spend: string; hours: string; merchants: string[]; approval: string; noThreshold: boolean; sweep: boolean }
 type Applied = RulesResult & { notes?: string[]; returned?: string; explorer?: string; wallet?: ApiRecord };
-interface Previewed { key: string; change: RulesChange; result: RulesPreview }
+interface Previewed { key: string; result: RulesPreview }
 interface Failure { message: string; problems: string[]; link?: string }
 
 const MAX_HOURS = 168;
@@ -85,7 +119,7 @@ const credentialText: Record<string, string> = {
 function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wallet: Wallet; live: LiveInfo; sentence?: string }) {
   const [initial] = useState(() => formFrom(live));
   const [form, setForm] = useState(initial);
-  const [mode, setMode] = useState<'sentence' | 'fields'>(sentence ? 'sentence' : 'fields');
+  const [mode, setMode] = useState<'sentence' | 'fields'>('sentence');
   const [text, setText] = useState(sentence ?? '');
   const [preview, setPreview] = useState<Previewed>();
   const [applied, setApplied] = useState<Applied>();
@@ -101,7 +135,7 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
   const key = JSON.stringify(change);
   const empty = mode === 'sentence' ? !text.trim() : !Object.keys(change).length;
   const current = preview?.key === key;
-  const canApply = !!preview && current && preview.result.ok && !busy && editable;
+  const canApply = !!preview && current && preview.result.ok && !!preview.result.resolved_change && !busy && editable;
 
   const options = useMemo(() => {
     const list = vendors.map(v => ({ address: v.address, name: v.name, status: v.credential?.status ?? 'unknown',
@@ -115,7 +149,7 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
     setBusy('preview'); setFailure(undefined);
     try {
       const result = await api.previewRules(wallet.id, next);
-      setPreview({ key: JSON.stringify(next), change: next, result });
+      setPreview({ key: JSON.stringify(next), result });
     } catch (error) {
       setPreview(undefined); setFailure(failureOf(error));
     } finally { setBusy(null); }
@@ -125,7 +159,7 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
     if (!preview || !canApply) return;
     setBusy('apply'); setFailure(undefined);
     try {
-      const out = await api.updateRules(wallet.id, preview.change) as Applied;
+      const out = await api.updateRules(wallet.id, preview.result.resolved_change!) as Applied;
       app.live.upsert(out.wallet ?? { ...live.record, ...out.rules } as ApiRecord);
       setApplied(out);
       const link = explorerTx(out.hashes?.return);
@@ -167,7 +201,7 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
     <p className="dialog-description">Change what {wallet.name} may spend. It holds {formatAmount(live.available)} now: {formatAmount(live.spent)} spent, {formatAmount(live.pending)} pending.</p>
     {mode === 'sentence' ? <>
       <label>Requested change<textarea value={text} maxLength={1000} disabled={!!busy} onChange={event => setText(event.target.value)}
-        placeholder="e.g. Ask me above 0.1. Only at Vendor A. Keep funds when done." /></label>
+        placeholder="e.g. Halve my approval threshold and stop using Vendor C." autoFocus /></label>
       <button type="button" className="text-button rules-switch" disabled={!!busy} onClick={() => { setMode('fields'); setPreview(undefined); setFailure(undefined); }}>Edit the fields instead</button>
     </> : <>
       <div className="form-grid">
@@ -193,6 +227,7 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
         onChange={event => set({ approval: event.target.value })} /></label>
       <label className="checkbox-label"><input type="checkbox" checked={form.noThreshold} disabled={!!busy} onChange={event => set({ noThreshold: event.target.checked })} />No approval threshold</label>
       <label className="checkbox-label"><input type="checkbox" checked={form.sweep} disabled={!!busy} onChange={event => set({ sweep: event.target.checked })} />Sweep back when done</label>
+      <button type="button" className="text-button rules-switch" disabled={!!busy} onClick={() => { setMode('sentence'); setPreview(undefined); setFailure(undefined); }}>Describe a change with AI</button>
     </>}
 
     {preview && <section className="rules-preview" aria-label="Preview of the change" aria-live="polite">
@@ -207,7 +242,7 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
     </div>}
 
     <div className="rules-actions">
-      <button type="submit" className="secondary-button" disabled={empty || !!busy}>{busy === 'preview' ? 'Checking…' : 'Preview changes'}</button>
+      <button type="submit" className="secondary-button" disabled={empty || !!busy}>{busy === 'preview' ? (mode === 'sentence' ? 'Understanding…' : 'Checking…') : 'Preview changes'}</button>
       <button type="button" className="primary-button" disabled={!canApply} onClick={() => void runApply()}>{busy === 'apply' ? 'Applying…' : 'Apply changes'}</button>
     </div>
     {empty && mode === 'fields' && <p className="demo-note">Change a rule above, then preview it.</p>}

@@ -19,8 +19,24 @@ RLUSD_HEX = "524C555344000000000000000000000000000000"
 RLUSD_ISSUER = os.getenv("RLUSD_TESTNET_ISSUER", "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV")
 VENDOR = os.getenv("X402_VENDOR", "Vendor A")
 PAY_TO = os.getenv("XRPL_PAY_TO")
-ITEMS = dict(x.split(":") for x in os.getenv("X402_ITEMS", "agenda:0.25,speakers:0.25").split(",") if ":" in x)
+ITEMS = dict(x.split(":") for x in os.getenv("X402_ITEMS", "agenda:0.25,speakers:0.25,market-data:0.25,xrpl-research:0.25").split(",") if ":" in x)
 SAMPLE = {  # sample data, not an official agenda; no real people
+    "market-data": {
+        "sample": True, "title": "Market research brief",
+        "summary": "Illustrative market-sizing data for the Cereal presentation. These are fictional companies and estimates, not live HubSpot or Crunchbase data.",
+        "findings": ["Sample target segment: 120 midsize software companies with 50–250 employees.",
+                     "Sample demand: 42 of 120 accounts express interest in automated payment operations.",
+                     "Sample annual opportunity: 120 accounts × $2,000 per account = $240,000.",
+                     "Next research step: validate company counts, buyer interviews, and willingness to pay against primary sources."],
+    },
+    "xrpl-research": {
+        "sample": True, "title": "XRPL ecosystem research brief",
+        "summary": "Fictional research dataset for demonstrating paid source access. No founder, funding, or product claim here is verified real-world research.",
+        "findings": ["Sample product: Ledger Grove, a fictional business-payments application.",
+                     "Sample documentation coverage: payment creation, vendor verification, and transaction reconciliation.",
+                     "Sample founder: Alex Example; sample financing: a fictional $2 million seed round.",
+                     "Source verification checklist: official product documentation, founder profiles, and dated investor announcements."],
+    },
     "agenda": {"event": "XRPL Swell hackathon, NYC (sample data)",
                "sessions": [{"time": "Sun 12:30", "title": "Submissions close"}, {"time": "Sun 14:15", "title": "Pitches"}]},
     "speakers": {"event": "XRPL Swell hackathon, NYC (sample data)",

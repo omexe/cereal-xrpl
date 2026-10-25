@@ -330,3 +330,104 @@ def test_a_run_another_service_reserved_while_this_one_planned_is_not_doubled(en
     env["mp"].setattr(pricing, "plan", plan_while_another_service_starts)
     out = runs.start(dep)
     assert out["refused"] == "already_running" and out["run"]["id"] == "r_elsewhere" and env["procs"] == []
+
+
+def test_chat_task_uses_existing_wallet_policy_and_idempotent_retry(env):
+    dep = wallet(approval_threshold="0.4")
+    before = deployments.get(dep)
+    body = {"task": 'Get the speaker list. Use my "Run test" wallet.', "request_id": "chat-1"}
+    first = api().post(f"/subagents/{dep}/run", json=body).json()
+    assert first["ok"] and first["run"]["task"] == body["task"]
+    assert env["plans"][0] == {"goal": body["task"], "envelope": Decimal("0.5"), "allowed": [VENDOR_A, VENDOR_C]}
+    after = deployments.get(dep)
+    for key in ("sentence", "budget", "allowed_payees", "approval_threshold", "expires_at", "sweep_when_done"):
+        assert after[key] == before[key]
+    assert api().post(f"/subagents/{dep}/run", json=body).json()["run"]["id"] == first["run"]["id"]
+    env["procs"][0].release.set()
+    wait_for(dep, "succeeded")
+    assert api().post(f"/subagents/{dep}/run", json=body).json()["run"]["id"] == first["run"]["id"]
+    assert len(env["procs"]) == len(env["plans"]) == 1
+    conflict = api().post(f"/subagents/{dep}/run", json={**body, "task": "Buy another item"}).json()
+    assert conflict["refused"] == "request_conflict"
+    newer = api().post(f"/subagents/{dep}/run", json={**body, "request_id": "chat-2"}).json()
+    assert newer["ok"]
+    assert api().post(f"/subagents/{dep}/run", json=body).json()["refused"] == "request_superseded"
+    assert len(env["procs"]) == 2
+
+
+def test_chat_does_not_accept_policy_overrides_or_blank_tasks(env):
+    dep = wallet()
+    for body in ({"task": "agenda", "budget": "1000"}, {"task": "agenda", "allowed_payees": []},
+                 {"task": "  "}, {"task": "a" * 4001}, {"request_id": " "}):
+        assert api().post(f"/subagents/{dep}/run", json=body).status_code == 422
+    assert not env["procs"] and not env["plans"]
+
+
+def test_chat_refuses_archived_wallet_and_unsupported_task(env):
+    dep = wallet(archived=True)
+    assert api().post(f"/subagents/{dep}/run", json={"task": "agenda"}).json()["refused"] == "not_active"
+    deployments.update(dep, archived=False)
+    env["plan"].update(needs=[], lines=[])
+    assert api().post(f"/subagents/{dep}/run", json={"task": "Unlisted research"}).json()["refused"] == "nothing_to_buy"
+    assert not env["procs"]
+
+
+def test_received_research_content_is_returned_with_finished_run(env):
+    import json
+    dep = wallet()
+    run = api().post(f"/subagents/{dep}/run").json()["run"]
+    document = {"resource": "http://a/swell/market-data", "title": "Market brief", "summary": "Sample research",
+                "findings": ["Sample finding"], "sample": True, "hash": "ABC", "private_metadata": "omit"}
+    with open(run["log"], "a") as f:
+        f.write(json.dumps({"event": "resource_received", "data": document}) + "\n")
+        f.write(json.dumps({"event": "refused", "data": {"title": "Not retrieved"}}) + "\n")
+    env["procs"][0].release.set()
+    done = wait_for(dep, "succeeded")
+    assert done["resources"] == [{k: v for k, v in document.items() if k != "private_metadata"}]
+
+
+def test_chat_completion_keeps_wallet_open_but_explicit_finish_sweeps(env):
+    from cereal import service
+    dep = wallet()
+    out = runs.start(dep, task="get agenda", request_id="chat-1", keep_open=True)
+    run_id = out["run"]["id"]
+    assert env["procs"][0].kw["env"]["CEREAL_RUN_ID"] == run_id
+    swept = []
+    env["mp"].setattr(service, "reclaim", lambda id: swept.append(id) or {"ok": True})
+    client = api()
+    response = client.post(f"/subagents/{dep}/done", json={"summary": "got agenda", "run_id": run_id}).json()
+    assert response["status"] == "active"
+    assert not swept
+    assert runs.start(dep, task="get agenda", request_id="chat-1", keep_open=True)["run"]["id"] == run_id
+    assert runs.start(dep, task="get agenda", request_id="chat-1", keep_open=False)["refused"] == "request_conflict"
+    assert client.post(f"/subagents/{dep}/done", json={"summary": "stale", "run_id": "old"}).json()["refused"] == "stale_run"
+    client.post(f"/subagents/{dep}/done", json={"summary": "owner finished"})
+    assert swept == [dep]
+
+
+def test_chat_accepts_multiple_new_requests_and_reports_empty_balance(env):
+    from cereal import service
+    dep = wallet()
+    first = runs.start(dep, task="get agenda", request_id="one", keep_open=True)["run"]
+    env["procs"][-1].release.set()
+    wait_for(dep, "succeeded")
+    deployments.record_payment(dep, {"to": VENDOR_C, "amount": "0.15", "ok": True, "validated": True,
+                                     "resource": "http://localhost:8003/swell/agenda", "hash": "SETTLED"})
+    second = runs.start(dep, task="get agenda", request_id="two", keep_open=True)["run"]
+    assert second["id"] != first["id"]
+    assert len(env["procs"]) == 2
+    env["procs"][-1].release.set()
+    wait_for(dep, "succeeded")
+    env["mp"].setattr(service, "rlusd_balance", lambda *_: Decimal("0"))
+    out = runs.start(dep, task="get agenda", request_id="three", keep_open=True)
+    assert out["refused"] == "over_budget" and out["remaining"] == "0"
+    assert len(env["procs"]) == 2
+    assert deployments.get(dep)["status"] == "active"
+
+
+def test_new_chat_request_cannot_repay_an_unresolved_purchase(env):
+    dep = wallet()
+    deployments.record_payment(dep, {"to": VENDOR_C, "amount": "0.15", "ok": None,
+                                     "resource": "http://localhost:8003/swell/agenda", "hash": "PENDING"})
+    assert runs.start(dep, task="get agenda", request_id="new", keep_open=True)["refused"] == "payment_pending"
+    assert not env["procs"]

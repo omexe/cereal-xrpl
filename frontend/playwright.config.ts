@@ -7,7 +7,7 @@ const port = Number(process.env.CEREAL_MOCK_UI_PORT ?? 5179);
 
 export default defineConfig({
   testDir: './tests',
-  testIgnore: /live-.*\.spec\.ts/,
+  testIgnore: /(?:live|sandbox)-.*\.spec\.ts/,
   use: { baseURL: `http://127.0.0.1:${port}`, viewport: { width: 1440, height: 960 } },
   webServer: { command: `npm run dev -- --port ${port}`, url: `http://127.0.0.1:${port}`, env: { VITE_CEREAL_MODE: 'mock' }, reuseExistingServer: false },
 });

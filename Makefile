@@ -10,11 +10,11 @@ service:      ## the cereal service on :8001 (deploy, cosign, reclaim, retire)
 	.venv/bin/uvicorn cereal.service:app --port 8001
 cosign: service
 vendor:       ## vendor A's paywall on :8000 (trusted): agenda 0.25, speakers 0.25 RLUSD
-	X402_VENDOR="Vendor A" X402_ITEMS="agenda:0.25,speakers:0.25" $(PY) x402/server.py
+	X402_VENDOR="Vendor A" X402_ITEMS="agenda:0.25,speakers:0.25,market-data:0.25,xrpl-research:0.25" $(PY) x402/server.py
 vendor-b:     ## vendor B's paywall on :8002 (revoked, cheapest: the trap): agenda 0.05, speakers 0.05
-	X402_PORT=8002 X402_VENDOR="Vendor B" X402_ITEMS="agenda:0.05,speakers:0.05" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_B"))') $(PY) x402/server.py
+	X402_PORT=8002 X402_VENDOR="Vendor B" X402_ITEMS="agenda:0.05,speakers:0.05,market-data:0.05,xrpl-research:0.05" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_B"))') $(PY) x402/server.py
 vendor-c:     ## vendor C's paywall on :8003 (trusted): agenda 0.15, speakers 0.30
-	X402_PORT=8003 X402_VENDOR="Vendor C" X402_ITEMS="agenda:0.15,speakers:0.30" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_C"))') $(PY) x402/server.py
+	X402_PORT=8003 X402_VENDOR="Vendor C" X402_ITEMS="agenda:0.15,speakers:0.30,market-data:0.15,xrpl-research:0.30" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_C"))') $(PY) x402/server.py
 ap4m-merchant: ## the AP4M merchant on :4308 (XRPL EVM testnet; redeems vouchers, settles RLUSD to the payout wallet)
 	cd ap4m && node merchant.mjs --port 4308 --price 0.25
 test:         ## unit tests (no network)

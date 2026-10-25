@@ -3,6 +3,7 @@
  * so a caller shows them instead of pretending something happened. Endpoints marked "contract" are implemented by
  * the feature routers in cereal/routes/. */
 import { API_BASE } from './mode';
+import type { Constraints } from './wallets';
 
 export type Decimal = string;
 export type Status = 'deploying' | 'active' | 'reclaimed' | 'recovered' | 'retired' | 'rejected' | 'failed';
@@ -27,9 +28,11 @@ export interface RecordRefusal {
 export interface PlanLine { vendor?: string; url?: string; price?: Decimal; reason?: string; evidence?: unknown }
 export interface Plan { item?: string; price?: Decimal; budget?: Decimal; vendor?: string; fallbacks?: PlanLine[]; rejected?: PlanLine[] }
 
+export interface ResearchResource { resource: string; hash?: string; title: string; summary?: string; sample?: boolean; findings?: string[] }
 export interface Run {
+  resources?: ResearchResource[];
   id: string; deployment: string; status: 'starting' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'interrupted';
-  started_at?: string; finished_at?: string | null; exit_code?: number | null; plan?: unknown; summary?: string | null; error?: string | null;
+  task?: string; request_id?: string; started_at?: string; finished_at?: string | null; exit_code?: number | null; plan?: unknown; summary?: string | null; error?: string | null;
 }
 
 export interface ApiRecord {
@@ -92,7 +95,7 @@ export interface RulesChange {
   sentence?: string; spend?: Decimal; expires_in_hours?: number; merchants?: string[];
   approval_threshold?: Decimal | null; sweep_when_done?: boolean;
 }
-export interface RulesPreview { ok: boolean; changes: string[]; problems: string[]; notes: string[]; rules?: Partial<ApiRecord> }
+export interface RulesPreview { resolved_change?: RulesChange | null; ok: boolean; changes: string[]; problems: string[]; notes: string[]; rules?: Partial<ApiRecord> }
 export interface RulesResult { ok: true; rules: Partial<ApiRecord>; changes: string[]; hashes?: Record<string, string> }
 
 export interface FundRequest { amount: Decimal; request_id?: string; speculos_decision?: 'approve' | 'reject' }
@@ -128,6 +131,12 @@ export const REFUSAL_TEXT: Record<string, string> = {
   no_payee_policy: 'Name at least one vendor.',
   subwallet_failed: 'The wallet could not be locked on the ledger. No budget was sent.',
   funding_failed: 'The wallet was locked but funding did not validate.',
+  nothing_to_buy: 'No connected vendor offers a resource matching this request. Try one of the available catalog items.',
+  already_bought: 'This wallet already purchased the requested resources.',
+  no_trusted_vendor: 'No vendor permitted by this wallet can supply the requested resources.',
+  balance_unavailable: 'Cereal could not read the wallet balance. Nothing was started.',
+  request_conflict: 'This request ID already belongs to another task.',
+  request_superseded: 'This request already ran. View its activity in Cereal.',
   already_running: 'This wallet’s task is already running.',
   use_add_funds: 'Only Add funds can raise a wallet’s budget.',
   not_a_planned_purchase: 'Refused: this wallet may only buy what its plan lists.',
@@ -169,6 +178,8 @@ const post = <T>(path: string, body: unknown = {}) => request<T>('POST', path, b
 const id = (dep: string) => encodeURIComponent(dep);
 
 export const api = {
+  chat: (body: { message: string; selected_wallet?: string; history: { role: "user" | "assistant"; content: string }[] }) =>
+    post<{ action: "reply" | "research"; reply: string; wallet_id: string | null; task: string | null }>("/research/chat", body),
   health: () => get<{ status: string; main: string; cosigner: string }>('/health'),
   main: () => get<MainWallet>('/main'),
   wallets: () => get<ApiRecord[]>('/subagents'),
@@ -183,9 +194,11 @@ export const api = {
   reclaim: (dep: string) => post<{ ok: boolean; returned: Decimal; steps: unknown[] }>(`/subagents/${id(dep)}/reclaim`),
   retire: (dep: string) => post<{ ok: boolean; hash?: string; result?: string }>(`/subagents/${id(dep)}/retire`),
   // contract (A01/A02): cereal/routes/runs.py
-  startRun: (dep: string) => post<{ ok: true; run: Run }>(`/subagents/${id(dep)}/run`),
+  startRun: (dep: string, body?: { task: string; request_id: string; keep_open?: boolean }) => post<{ ok: true; run: Run }>(`/subagents/${id(dep)}/run`, body),
   run: (dep: string) => get<{ ok: true; run: Run | null }>(`/subagents/${id(dep)}/run`),
   // contract (A03): cereal/routes/rules.py
+  previewDemoRules: (sentence: string, name: string, current: Constraints) =>
+    post<{ ok: boolean; problems: string[]; constraints: Constraints | null }>('/demo/rules/preview', { sentence, name, current }),
   previewRules: (dep: string, change: RulesChange) => post<RulesPreview>(`/subagents/${id(dep)}/rules/preview`, change),
   updateRules: (dep: string, change: RulesChange) => post<RulesResult>(`/subagents/${id(dep)}/rules`, change),
   // contract (A04): cereal/routes/funding.py

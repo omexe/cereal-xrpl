@@ -1,0 +1,92 @@
+{
+  "folders": [
+    {
+      "id": "test-research",
+      "name": "Research wallets"
+    }
+  ],
+  "wallets": [
+    {
+      "id": "test-xrp-research",
+      "name": "XRP research",
+      "description": "Research XRPL products, documentation, founders, and funding.",
+      "balance": 20,
+      "archived": false,
+      "folderId": "test-research",
+      "mockDataVersion": 1,
+      "transactions": [],
+      "constraints": {
+        "spend": 20,
+        "days": 2,
+        "merchants": [
+          "Ledger Lens",
+          "Venture Atlas",
+          "Open Ledger Index"
+        ],
+        "approval": 5,
+        "sweep": false
+      }
+    },
+    {
+      "id": "test-review-every-payment",
+      "name": "Review every payment",
+      "description": "Require your approval for each paid research source.",
+      "balance": 20,
+      "archived": false,
+      "folderId": "test-research",
+      "mockDataVersion": 1,
+      "transactions": [],
+      "constraints": {
+        "spend": 20,
+        "days": 2,
+        "merchants": [
+          "Ledger Lens",
+          "Venture Atlas",
+          "Open Ledger Index"
+        ],
+        "approval": 0,
+        "sweep": false
+      }
+    },
+    {
+      "id": "test-small-budget",
+      "name": "Small budget",
+      "description": "Test automatic payments and blocks when the remaining budget is too small.",
+      "balance": 3,
+      "archived": false,
+      "folderId": "test-research",
+      "mockDataVersion": 1,
+      "transactions": [],
+      "constraints": {
+        "spend": 3,
+        "days": 2,
+        "merchants": [
+          "Ledger Lens",
+          "Venture Atlas",
+          "Open Ledger Index"
+        ],
+        "approval": 5,
+        "sweep": false
+      }
+    },
+    {
+      "id": "test-restricted-sources",
+      "name": "Restricted sources",
+      "description": "Allow the product landscape source and block merchants outside the allowed list.",
+      "balance": 20,
+      "archived": false,
+      "folderId": "test-research",
+      "mockDataVersion": 1,
+      "transactions": [],
+      "constraints": {
+        "spend": 20,
+        "days": 2,
+        "merchants": [
+          "Ledger Lens"
+        ],
+        "approval": 5,
+        "sweep": false
+      }
+    }
+  ]
+}

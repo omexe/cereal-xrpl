@@ -115,3 +115,21 @@ def test_shop_locks_each_subagent_to_its_plan_and_probes_an_off_plan_vendor(mark
     agenda_extra = dict(zip(starts[0][1][::2], starts[0][1][1::2]))
     assert agenda_extra["--probe-off-plan"] == "rA", "A is trusted but outside the agenda plan"
     assert "--probe-off-plan" not in starts[1][1], "every trusted vendor is already in the speakers plan"
+
+
+def test_research_phrases_match_real_catalog_resources_without_model(monkeypatch):
+    from cereal import llm
+    monkeypatch.setattr(llm, "available", lambda: False)
+    items = ["agenda", "speakers", "market-data", "xrpl-research"]
+    assert pricing.needs_from_goal("Lets research market data. search on things like Vendor A. use our market sizing wallet", items) == ["market-data"]
+    assert pricing.needs_from_goal("Do deep research on the XRPL product, docs, founder and funding. Use our XRP research wallet", items) == ["xrpl-research"]
+    assert pricing.needs_from_goal("Get the agenda. Use my market sizing wallet", items) == ["agenda"]
+    assert pricing.needs_from_goal("Research market data", ["agenda", "speakers"]) == []
+
+
+def test_explicit_vendor_name_narrows_existing_wallet_allowlist(market):
+    p = pricing.plan("Get the agenda from Vendor A", Decimal("2"), list(CAT), allowed=["rA", "rC"])
+    assert p["lines"][0]["chosen"]["vendor"] == "Vendor A"
+    assert any(r["vendor"] == "Vendor C" and r["reason"] == "not_requested" for r in p["lines"][0]["rejected"])
+    refused = pricing.plan("Get the agenda from Vendor C", Decimal("2"), list(CAT), allowed=["rA"])
+    assert refused["reason"] == "no_trusted_vendor"

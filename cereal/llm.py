@@ -86,12 +86,12 @@ def _json_from(text: str) -> dict | None:
     return None
 
 
-def _or_extract(system: str, user: str, schema: dict, name: str) -> dict | None:
+def _or_extract(system: str, user: str, schema: dict, name: str, timeout: float = 180) -> dict | None:
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     body = {"model": OPENROUTER_MODEL, "max_tokens": OR_MAX_TOKENS, "messages": msgs,
             "response_format": {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}}}
     try:
-        data = _or_post(body)
+        data = _or_post(body, timeout=timeout)
     except ProviderError as e:
         if "HTTP 402" in str(e) or "HTTP 401" in str(e):
             raise  # credit or key problem: retrying without structured outputs can't help
@@ -100,7 +100,7 @@ def _or_extract(system: str, user: str, schema: dict, name: str) -> dict | None:
         body["messages"] = [{"role": "system", "content": system + "\nReply with only one JSON object matching this "
                                                                    "JSON Schema, no prose: " + json.dumps(schema)},
                             {"role": "user", "content": user}]
-        data = _or_post(body)
+        data = _or_post(body, timeout=timeout)
     return _json_from((data.get("choices") or [{}])[0].get("message", {}).get("content") or "")
 
 
@@ -135,7 +135,9 @@ def _or_loop(system: str, user: str, tools: dict, max_turns: int, on_event, stat
 def _anthropic_create(**kw):
     import anthropic
     # A stalled call must not hold a run for the SDK's default 10 minutes: fail over to the deterministic path instead.
-    client = anthropic.Anthropic(timeout=float(os.getenv("CEREAL_ANTHROPIC_TIMEOUT", "90")), max_retries=2)
+    request_timeout = kw.pop("_request_timeout", None)
+    client = anthropic.Anthropic(timeout=request_timeout or float(os.getenv("CEREAL_ANTHROPIC_TIMEOUT", "90")),
+                                max_retries=0 if request_timeout is not None else 2)
     if kw.get("model", "").startswith("claude-haiku"):  # Haiku 5.5 has no server-side refusal fallback
         return client.messages.create(**kw)
     try:  # server-side refusal fallback, routed by category ("default")
@@ -144,8 +146,8 @@ def _anthropic_create(**kw):
         return client.messages.create(**kw)
 
 
-def _anthropic_extract(system: str, user: str, schema: dict, name: str) -> dict | None:
-    resp = _anthropic_create(model=MODEL, max_tokens=4000, system=system,
+def _anthropic_extract(system: str, user: str, schema: dict, name: str, timeout: float | None = None) -> dict | None:
+    resp = _anthropic_create(model=MODEL, max_tokens=4000, system=system, _request_timeout=timeout,
                              messages=[{"role": "user", "content": user}],
                              output_config={"effort": "low", "format": {"type": "json_schema", "schema": schema}})
     if resp.stop_reason == "refusal":
@@ -200,14 +202,15 @@ def _plain(err: Exception | str) -> str:
     return s[:200]
 
 
-def extract(system: str, user: str, schema: dict, name: str) -> dict | None:
+def extract(system: str, user: str, schema: dict, name: str, *, timeout: float | None = None) -> dict | None:
     """One structured answer that matches `schema`, from the first provider that gives a valid one; None if none
     (then `last_error` says why)."""
     global served_by, last_error
     last_error = None if providers() else "no model key set"
     for p in providers():
         try:
-            out = (_or_extract if p == "openrouter" else _anthropic_extract)(system, user, schema, name)
+            extractor = _or_extract if p == "openrouter" else _anthropic_extract
+            out = extractor(system, user, schema, name, **({"timeout": timeout} if timeout is not None else {}))
         except Exception as e:
             out, last_error = None, f"{p}: {_plain(e)}"
         if isinstance(out, dict):

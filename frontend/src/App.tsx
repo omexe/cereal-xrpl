@@ -13,7 +13,7 @@ import { formatAmount } from './format';
 import { isActive } from './live';
 import { isLive } from './mode';
 import { useLiveData } from './store';
-import { parseConstraints, type Wallet } from './wallets';
+import { type Wallet } from './wallets';
 import { useWorkspace } from './workspaceStore';
 
 type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | null;
@@ -144,15 +144,7 @@ export default function App() {
       return;
     }
     if (!selected || !editable) return;
-    if (isLive) { setRulesSentence(prompt.trim()); setPrompt(''); setModal('constraints'); return; }
-    const constraints = parseConstraints(prompt);
-    if (!constraints) {
-      setPromptError(true);
-      notify('Try: Spend up to $20 over 2 days, only at HubSpot, Clearbit and Apollo. Ask me above $5. Sweep back when done.');
-      return;
-    }
-    if (!await updateWallet(selected.id, { constraints })) return;
-    setPrompt(''); setPromptError(false); notify('Wallet constraints updated.');
+    setRulesSentence(prompt.trim()); setPrompt(''); setPromptError(false); setModal('constraints');
   }
   function walletRow(wallet: Wallet, nested = false) {
     const finished = !isActive(wallet);

@@ -1,5 +1,6 @@
 import type { AppActions } from '../appActions';
 import { isLive } from '../mode';
+import { TestEnvironmentLinks } from './TestEnvironmentLinks';
 import { DemoSettings } from './DemoSettings';
 import { Dialog } from './Dialog';
 import { WalletSettings } from './WalletSettings';
@@ -17,6 +18,7 @@ export function SettingsDialog({ app }: { app: AppActions }) {
   if (isLive) return <Dialog title="Workspace settings" onClose={app.close}>
     <div className="settings-live">
       <p className="dialog-description">Wallets, balances, rules, and vendors come from the cereal service. Payments settle on XRPL testnet.</p>
+      <TestEnvironmentLinks />
       <ConnectionPanel live={app.live} archived={archived} />
       <WalletSettings app={app} />
       <PolicyPanel main={app.live.main} />

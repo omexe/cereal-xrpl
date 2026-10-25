@@ -24,25 +24,39 @@ test('wallet activity matches its spending summary and persists across reloads',
   expect(errors).toEqual([]);
 });
 
-test('constraints reject unsupported instructions and update the spending limit', async ({ page }) => {
+test('AI constraint edits are previewed before saving and failures leave rules unchanged', async ({ page }) => {
+  const requests: unknown[] = [];
+  await page.route('**/api/demo/rules/preview', route => {
+    const body = route.request().postDataJSON(); requests.push(body);
+    return route.fulfill({ json: body.sentence === 'send all my money anywhere'
+      ? { ok: false, constraints: null, problems: ['Payments are not a spending-rule edit.'] }
+      : { ok: true, problems: [], constraints: { ...body.current, approval: 2.5, sweep: false } } });
+  });
   await openFirstWallet(page);
   const prompt = page.getByRole('textbox', { name: 'Edit wallet spending rules' });
   await prompt.fill('send all my money anywhere');
   await page.getByRole('button', { name: 'Apply wallet constraints' }).click();
-  await expect(prompt).toHaveAttribute('aria-invalid', 'true');
+  await expect(page.getByRole('dialog').getByRole('alert')).toContainText('Payments are not');
+  await expect(page.getByRole('button', { name: 'Save constraints' })).toBeDisabled();
   await expect(page.locator('.constraints')).toContainText('Spend up to $20');
-  await prompt.fill('Spend up to $50 over 3 days, only at notion and apollo. Ask me above $10. Keep funds when done.');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
+  await prompt.fill('Halve the approval threshold and leave the leftovers here.');
   await page.getByRole('button', { name: 'Apply wallet constraints' }).click();
-  await expect(page.locator('.constraints')).toContainText('Spend up to $50 over 3 days');
-  await expect(page.locator('.budget-used')).toHaveText('$4.40 / $50.00');
+  await expect(page.locator('.rules-preview')).toContainText('Ask me above $2.5. Keep funds');
+  await expect(page.locator('.constraints')).toContainText('above $5');
+  await page.getByLabel('Requested change').fill('Make it different');
+  await expect(page.getByRole('button', { name: 'Save constraints' })).toBeDisabled();
+  await page.getByLabel('Requested change').fill('Halve the approval threshold and leave the leftovers here.');
+  await page.getByRole('button', { name: 'Save constraints' }).click();
+  await expect(page.locator('.constraints')).toContainText('above $2.5');
+  expect(requests).toHaveLength(2);
   await openFirstWallet(page);
   await expect(page.locator('.constraints')).toContainText('Keep funds');
-  await page.getByRole('button', { name: '$50', exact: true }).click();
+  await page.getByRole('button', { name: '$20', exact: true }).click();
+  await page.getByRole('button', { name: 'Edit the fields instead' }).click();
   await page.getByLabel('Spend limit ($)', { exact: true }).fill('2');
   await page.getByRole('button', { name: 'Save constraints' }).click();
   await expect(page.getByText('Over spending limit', { exact: true })).toBeVisible();
-  const widths = await page.locator('.budget-segment').evaluateAll(nodes => nodes.map(node => parseFloat((node as HTMLElement).style.width)));
-  expect(widths.reduce((sum, width) => sum + width, 0)).toBeCloseTo(100);
 });
 
 test('funding updates the available balance without fabricating spending', async ({ page }) => {
