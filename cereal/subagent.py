@@ -51,7 +51,8 @@ class Subagent:
         from x402_xrpl.client.presigned_payment_payer import build_payment_header_for_signed_blob
         from x402_xrpl.clients import decode_payment_response
         from x402_xrpl.types import ResourceInfo
-        first = requests.get(url, timeout=30)
+        # never follow a redirect: a site given by a user could pay-then-302 to a private address (SSRF)
+        first = requests.get(url, timeout=30, allow_redirects=False)
         if first.status_code != 402:
             return {"ok": first.ok, "status": first.status_code, "paid": False, "data": _body(first)}
         body = first.json()
@@ -71,12 +72,12 @@ class Subagent:
         header = build_payment_header_for_signed_blob(
             req=req, signed_tx_blob=co["blob"], invoice_id=req.invoice_id(),
             resource=ResourceInfo.from_dict(body["resource"]) if isinstance(body.get("resource"), dict) else None)
-        paid = requests.get(url, headers={"PAYMENT-SIGNATURE": header}, timeout=180)
+        paid = requests.get(url, headers={"PAYMENT-SIGNATURE": header}, timeout=180, allow_redirects=False)
         retried = False
         if paid.status_code == 409 and _validated(self.c, co["hash"]) == "tesSUCCESS":
             # t54 submitted but could not confirm in time ("settlement_status_unknown"); the ledger says it settled,
             # so present the same payment once more for the resource.
-            paid = requests.get(url, headers={"PAYMENT-SIGNATURE": header}, timeout=180)
+            paid = requests.get(url, headers={"PAYMENT-SIGNATURE": header}, timeout=180, allow_redirects=False)
             retried = True
         settlement = decode_payment_response(paid.headers["PAYMENT-RESPONSE"]) if "PAYMENT-RESPONSE" in paid.headers else None
         ok = paid.status_code == 200 and bool(settlement and settlement.get("success"))
@@ -96,8 +97,15 @@ class Subagent:
             out["retried_after_409"] = True
         if not ok:
             out["error"] = _body(paid)
-            if _validated(self.c, co["hash"]) == "tesSUCCESS":
+            settled = _validated(self.c, co["hash"])
+            if settled == "tesSUCCESS":
                 out["refused"] = "paid_not_served"  # evidence: the validated payment; the vendor owes the resource
+                if paid.status_code != 200:  # a 200 without a settlement header still answered: not reported
+                    # the delivery check: cereal verifies the hash on the ledger, takes payee and resource from its
+                    # own payment record (not from here) and, for an owned wallet, blocks the owner's sites paying
+                    # this address
+                    report(self.dep_id, "paid_not_delivered", {"result": settled, "hash": co["hash"]},
+                           {"resource": url, "payee": req.pay_to, "price": str(req.amount), "status": paid.status_code})
         return out
 
     def buy_ap4m(self, url: str, max_rlusd: str = "0.25") -> dict:

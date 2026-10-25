@@ -33,12 +33,18 @@ PLAIN = {
     "in_progress": "the same request is already being handled",
     "request_id_reused": "a retry id was reused for a different request",
     "not_a_planned_purchase": "a direct payment from a wallet that may only buy what its plan lists",
+    "site_blocked": "this site is blocked for you (it took a payment without delivering, or failed a safety check)",
+    "paid_not_delivered": "the site took the payment but did not deliver what was paid for",
+    "private_site": "a site on your private list: your Ledger signs every payment to it",
 }
 REPORTABLE = {  # events a subagent or demo beat may report; each is a refusal by the ledger itself
     "hijack_alone": "a hijacked subagent signed a payment by itself",
     "stolen_keys_drain": "stolen subagent + cereal keys tried to take more than the wallet holds",
     "stolen_keys_main_wallet": "stolen subagent + cereal keys tried to spend from the main wallet",
     "prove_lock": "the subagent signed a payment by itself (lock check)",
+    # the delivery check (not a ledger refusal): a validated payment the site did not deliver for. cereal takes the
+    # payee and resource from its own payment record and blocks the owner's sites that pay that address.
+    "paid_not_delivered": "a site took the payment but did not deliver",
 }
 EXPLORER = config.EXPLORER
 
@@ -71,13 +77,30 @@ def feed() -> list[dict]:
                         "why": PLAIN.get(x.get("reason"), x.get("reason")), "outcome": "never considered",
                         "proof": _link(x.get("evidence"))})
         for e in r.get("events", []):
+            if e.get("kind") == "paid_not_delivered":
+                blocked = e.get("blocked_sites") or []
+                what = (f"paid {e.get('amount')} RLUSD to {e.get('payee')}"
+                        + (f" for {e['resource']}" if e.get("resource") else "")) if e.get("payee") \
+                    else "a purchase reported paid but not delivered (no settled payment of this wallet matches)"
+                out.append({**who, "at": e.get("at"), "by": "cereal", "kind": "paid_not_delivered",
+                            "code": "paid_not_delivered", "what": what,
+                            "why": PLAIN["paid_not_delivered"],
+                            "outcome": f"paid, not delivered: {len(blocked)} site(s) blocked" if blocked
+                            else "paid, not delivered: recorded",
+                            "proof": _link(e.get("hash")), "verified": e.get("verified"), "sites": blocked})
+                continue
             capped = e.get("result") == "tecPATH_PARTIAL"
             out.append({**who, "at": e.get("at"), "by": "ledger", "kind": e.get("kind"), "code": e.get("result"),
                         "what": REPORTABLE.get(e.get("kind"), e.get("kind")), "why": PLAIN.get(e.get("result"), e.get("result")),
                         "outcome": "capped: nothing moved" if capped else "nothing sent", "proof": _link(e.get("hash")),
                         "verified": e.get("verified")})
         for p in r.get("payments", []):
-            if p.get("approved_by") == "ledger":
+            if p.get("approved_by") == "ledger" and p.get("reason") == "private_site":
+                out.append({**who, "at": p.get("at"), "by": "owner", "kind": "private_site_approved",
+                            "code": "approved", "what": f"pay {p.get('amount')} RLUSD to {p.get('to')}",
+                            "why": PLAIN["private_site"], "outcome": "signed by the owner's Ledger",
+                            "proof": p.get("explorer")})
+            elif p.get("approved_by") == "ledger":
                 out.append({**who, "at": p.get("at"), "by": "owner", "kind": "large_payment_approved",
                             "code": "approved", "what": f"pay {p.get('amount')} RLUSD to {p.get('to')}",
                             "why": f"above the {p.get('approval', {}).get('threshold')} RLUSD threshold",

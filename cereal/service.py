@@ -11,7 +11,7 @@ import threading
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from xrpl.models.amounts import IssuedCurrencyAmount
 from xrpl.models.requests import Tx
@@ -102,7 +102,7 @@ class ChatRequest(BaseModel):
 
 
 class EventReport(BaseModel):
-    kind: str            # hijack_alone | stolen_keys_drain | stolen_keys_main_wallet | prove_lock
+    kind: str            # hijack_alone | stolen_keys_drain | stolen_keys_main_wallet | prove_lock | paid_not_delivered
     result: str          # the ledger's code, e.g. tefBAD_QUORUM, tecPATH_PARTIAL, tefBAD_SIGNATURE
     hash: str | None = None
     detail: dict | None = None
@@ -386,8 +386,13 @@ def wallet_create(req: WalletRequest) -> dict:
 
 
 @app.get("/subagents")
-def list_subagents() -> list[dict]:
-    return [_with_balance(r) for r in deployments.all_()]
+def list_subagents(request: Request) -> list[dict]:
+    """Every wallet, except those owned by another user (Sites: a wallet bought for a user's site carries `owner`).
+    Wallets without an owner stay visible to everyone. GET /subagents/{id} stays open: subagents read it, tokenless."""
+    from . import owners
+    user = owners.current_user(request)
+    me = user["id"] if user else None
+    return [_with_balance(r) for r in deployments.all_() if not r.get("owner") or r.get("owner") == me]
 
 
 @app.get("/subagents/{dep_id}")
@@ -513,36 +518,41 @@ def _approval_threshold(rec: dict) -> Decimal | None:
 
 
 def _owner_approves_payment(rec: dict, agent_signed: Transaction, amt, threshold: Decimal, present: bool,
-                            resource: str | None) -> dict:
+                            resource: str | None, reason: str | None = None) -> dict:
     """A payment above the threshold passed every policy check; cereal does NOT co-sign it. The owner's Ledger is
-    asked instead: it shows the payment, and if approved its signature (weight 2) joins the subagent's (weight 1)."""
+    asked instead: it shows the payment, and if approved its signature (weight 2) joins the subagent's (weight 1).
+    `reason` says why the device was asked when it is not the amount (e.g. "private_site"); it lands on the approval,
+    the payment record and the result (a refusal carries it inside `approval`: _refuse's first argument is `reason`)."""
     from xrpl.core.binarycodec import decode
     from xrpl.transaction import multisign
+    why = {"reason": reason} if reason else {}
     c = client()
     if not device.available():
-        return _refuse("device_unavailable", requested=amt.value, threshold=str(threshold))
+        return _refuse("device_unavailable", requested=amt.value, threshold=str(threshold),
+                       **({"approval": {"result": "device_unavailable", **why}} if why else {}))
     d = agent_signed.to_dict(); d.pop("signers", None)
     base = Transaction.from_dict(d)
     decision = None if config.DEVICE_DECISION == "manual" else rec.get("speculos_payment_decision")
     signed = device.sign(base, decision)
     approval = {"by": signed.get("address") or config.LEDGER_ADDRESS, "threshold": str(threshold),
-                "result": "approved" if signed.get("ok") else signed.get("result"), "screens": signed.get("screens", [])}
+                "result": "approved" if signed.get("ok") else signed.get("result"), "screens": signed.get("screens", []),
+                **why}
     if not signed.get("ok"):
         return _refuse(signed.get("result") or "device_error", requested=amt.value, threshold=str(threshold),
                        approval=approval, sent_transactions=0, error=str(signed.get("error") or "")[-300:] or None)
     combined = multisign(base, [agent_signed, Transaction.from_xrpl(decode(signed["signedBlob"]))])
     entry = {"to": agent_signed.destination, "amount": amt.value, "approved_by": "ledger", "approval": approval,
-             "at": datetime.now(timezone.utc).isoformat()}
+             "at": datetime.now(timezone.utc).isoformat(), **why}
     if present:  # x402: the vendor's facilitator submits it
         h = combined.get_hash()
         deployments.record_payment(rec["id"], {**entry, "rail": "x402", "resource": resource, "ok": None,
                                                "result": "presented", "hash": h,
                                                "explorer": f"{config.EXPLORER}/transactions/{h}"})
         return {"ok": True, "presented": True, "hash": h, "blob": combined.blob(), "approved_by": "ledger",
-                "approval": approval}
+                "approval": approval, **why}
     result = submit_capture(combined, c)
     deployments.record_payment(rec["id"], {**entry, "rail": "direct", **result})
-    return {**result, "approved_by": "ledger", "approval": approval}
+    return {**result, "approved_by": "ledger", "approval": approval, **why}
 
 
 def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, resource: str | None = None) -> dict:
@@ -557,10 +567,28 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
                        amount=amt.value if isinstance(amt, IssuedCurrencyAmount) else str(amt),
                        hint="this wallet's task only pays vendors for the resources in its plan")
     c = client()
+    private_site = False
     if config.REQUIRE_VENDOR_CREDENTIAL:  # Part 2: trust comes from the ledger, not from a list we keep
         v = vendors.check(c, tx.destination, vendor_class=rec.get("vendor_class", "data"))
         if v["status"] != "valid":
-            return _refuse("vendor_not_credentialed", payee=tx.destination, vendor=v)
+            if v["status"] == "revoked":  # a public revocation: no owner's list can bring it back
+                return _refuse("vendor_not_credentialed", payee=tx.destination, vendor=v)
+            # Sites: an uncredentialed payee only on the wallet owner's own private list, and then cereal never
+            # co-signs: the owner's Ledger signs every payment (below, after every other check). Nothing off-chain
+            # grants cereal's trust; this list only lets the owner's own key decide.
+            from . import site_registry
+            trust = site_registry.trust_for(rec.get("owner"), tx.destination)
+            if trust == "blocked":
+                return _refuse("site_blocked", payee=tx.destination, vendor=v)
+            if trust != "private":
+                return _refuse("vendor_not_credentialed", payee=tx.destination, vendor=v)
+            private_site = True
+    if not private_site and rec.get("owner"):
+        # Sites: the owner's own evidence only ever narrows. A credentialed payee (or any payee with credentials off)
+        # that took this owner's money without delivering is not paid from this owner's wallets either.
+        from . import site_registry
+        if site_registry.trust_for(rec["owner"], tx.destination) == "blocked":
+            return _refuse("site_blocked", payee=tx.destination)
     if rec["allowed_payees"] and tx.destination not in rec["allowed_payees"]:  # optional narrower filter
         return _refuse("payee_not_allowed", payee=tx.destination, allowed=rec["allowed_payees"])
     amt = tx.amount
@@ -579,6 +607,8 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     memos = decode_memos(tx_json)
     if not memos or memos[0].get("job") != rec["id"] or memos[0].get("tag") != rec["tag"]:
         return _refuse("memo_mismatch")
+    if private_site:  # whatever the amount: the owner's Ledger signs, cereal does not
+        return _owner_approves_payment(rec, tx, amt, Decimal(0), present, resource, reason="private_site")
     threshold = _approval_threshold(rec)
     if threshold is not None and Decimal(amt.value) > threshold:
         return _owner_approves_payment(rec, tx, amt, threshold, present, resource)
@@ -599,9 +629,11 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
 @app.post("/subagents/{dep_id}/events")
 def report_event(dep_id: str, ev: EventReport) -> dict:
     """A refusal that happened on the ledger itself (no cereal signature involved), reported by a subagent or a demo
-    beat. With a hash, cereal checks the ledger: the event is marked verified only if the validated result matches."""
+    beat. With a hash, cereal checks the ledger: the event is marked verified only if the validated result matches.
+    Sites: `paid_not_delivered` (the delivery check) also blocks the wallet owner's sites paying that address."""
     from . import events
-    if not deployments.get(dep_id):
+    rec = deployments.get(dep_id)
+    if not rec:
         raise HTTPException(404, "unknown deployment")
     if ev.kind not in events.REPORTABLE:
         return _refuse("unknown_event_kind", allowed=sorted(events.REPORTABLE))
@@ -614,8 +646,32 @@ def report_event(dep_id: str, ev: EventReport) -> dict:
             verified = False
     entry = {"kind": ev.kind, "result": ev.result, "hash": ev.hash, "verified": verified, "detail": ev.detail,
              "at": datetime.now(timezone.utc).isoformat()}
+    if ev.kind == "paid_not_delivered":
+        entry.update(_delivery_check(rec, ev.hash, settled=verified is True and ev.result == "tesSUCCESS"))
     deployments.record_event(dep_id, entry)
     return {"ok": True, **entry}
+
+
+def _delivery_check(rec: dict, tx_hash: str | None, settled: bool) -> dict:
+    """paid_not_delivered: acted on only when the ledger shows the payment validated with tesSUCCESS (`settled`) and
+    the hash is one of this wallet's payments in cereal's own record. The payee and resource come from that record,
+    never from the report, so a report (the endpoint is tokenless) can only block an address this wallet really paid:
+    it narrows, never widens, what may be paid. The payment is marked undelivered; for a wallet with an owner, every
+    site of that owner paying the address is blocked (site_registry.block)."""
+    from . import site_registry
+    paid = next((p for p in rec.get("payments", []) if tx_hash and p.get("hash") == tx_hash), None)
+    if not paid:
+        return {"blocked_sites": [], "note": "no payment from this wallet has that hash; nothing blocked"}
+    if not settled:
+        return {"blocked_sites": [], "note": "the ledger does not show this payment settled; nothing blocked"}
+    deployments.update_payment(rec["id"], tx_hash, delivered=False)
+    out = {"payee": paid.get("to"), "amount": paid.get("amount"), "resource": paid.get("resource"), "blocked_sites": []}
+    if rec.get("owner"):
+        evidence = {"hash": tx_hash, "explorer": f"{config.EXPLORER}/transactions/{tx_hash}", "payee": paid.get("to"),
+                    "resource": paid.get("resource"), "amount": paid.get("amount"), "deployment": rec["id"]}
+        changed = site_registry.block(rec["owner"], paid.get("to"), "paid_not_delivered", evidence)
+        out["blocked_sites"] = [s["id"] for s in changed]
+    return out
 
 
 @app.get("/plan")
