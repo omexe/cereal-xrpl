@@ -361,3 +361,25 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
 @media (max-width: 760px) {
   .wallet-figures { gap: 8px 20px; padding: 0; }
 }
+
+/* unit 3 */
+.dialog-content .rules-merchants { border: 0; padding: 0; margin: 16px 0; min-width: 0; }
+.rules-merchants legend { font: var(--font-label); padding: 0; margin-bottom: 4px; }
+.dialog-content .rules-merchant { margin: 8px 0; align-items: flex-start; }
+.rules-merchant span { font: var(--font-body); display: flex; flex-direction: column; }
+.rules-merchant small { font: var(--font-caption); color: var(--color-text-muted); }
+.rules-merchant small.rules-untrusted { color: var(--color-error); }
+.rules-merchant input:disabled + span { color: var(--color-text-muted); }
+.rules-switch { padding: 0; margin: -8px 0 8px; }
+.rules-preview, .rules-failure { border-top: 1px solid var(--color-border); margin-top: 20px; padding-top: 16px; }
+.rules-preview h3 { font: var(--font-label); margin: 12px 0 6px; }
+.rules-preview h3:first-child { margin-top: 0; }
+.rules-list { font: var(--font-body); margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.rules-notes { color: var(--color-text-secondary); }
+.rules-problems, .rules-failure { color: var(--color-error); }
+.rules-failure p { font: var(--font-body); margin-bottom: 6px; }
+.rules-failure a, .rules-return a { color: var(--blue); }
+.rules-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 20px; }
+.rules-actions .secondary-button, .rules-actions .primary-button { margin: 0; width: 100%; padding: 11px 16px; font: var(--font-control); }
+.rules-actions .secondary-button:disabled { color: var(--color-text-muted); }
+.rules-return { font: var(--font-body); margin: 16px 0 0; }
