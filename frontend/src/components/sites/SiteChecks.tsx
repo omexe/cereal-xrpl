@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle, XCircle } from '@untitledui/icons';
+import { AlertTriangle, CheckCircle, SlashCircle01, XCircle } from '@untitledui/icons';
 import type { SiteCheck, SiteProbe } from '../../api';
 import { checkName, checkState, credentialText, extraReason, kindText, TRUST_LABEL, TRUST_TEXT, VERDICT_TEXT, type TrustTier } from './siteText';
 
@@ -53,4 +53,31 @@ export function ProbeFindings({ probe }: { probe: Probed }) {
       {probe.verdict_reasons.length > 0 && <ul aria-label="Verdict reasons">{probe.verdict_reasons.map(r => <li key={r}>{r}</li>)}</ul>}
     </div>}
   </>;
+}
+
+const archiveDate = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+/** Why cereal can't use a site, as a notice the owner can't miss: a bot wall named plainly (and never bypassed), a
+ * paywall in another currency, or a site that can't be reached. Offers a public archived copy when there is one. */
+export function SiteNotice({ probe, onUseArchive }: { probe: Probed; onUseArchive?: (url: string) => void }) {
+  if (probe.kind !== 'unreachable' && probe.kind !== 'unpayable') return null;
+  const host = probe.host || probe.url;
+  const walled = !!probe.blocked_by;
+  const heading = walled ? `${host} blocks AI agents`
+    : probe.kind === 'unpayable' ? `cereal can’t pay ${host}` : `cereal can’t reach ${host}`;
+  const body = walled
+    ? `This site uses ${probe.blocked_by === 'a captcha' ? 'a captcha' : `${probe.blocked_by}’s bot protection`} to keep automated visitors out. Only a person in a browser can get past it, so cereal can’t read it or buy from it, and it won’t try to get around it. Nothing was paid.`
+    : probe.reason ?? 'cereal can neither read this site nor pay it in RLUSD on XRPL testnet. Nothing was paid.';
+  return <div className="site-notice" role="alert" data-kind={probe.kind} data-walled={walled ? 'true' : undefined}>
+    <SlashCircle01 aria-hidden="true" />
+    <div>
+      <p className="site-notice-heading">{heading}</p>
+      <p>{body}</p>
+      {walled && probe.archive && <>
+        <p className="site-notice-hint">The {probe.archive.source} has a public copy from {archiveDate.format(new Date(probe.archive.timestamp))}.
+          It is an older snapshot, not the live site.</p>
+        {onUseArchive && <button type="button" className="secondary-button" onClick={() => onUseArchive(probe.archive!.url)}>Use the archived copy</button>}
+      </>}
+    </div>
+  </div>;
 }

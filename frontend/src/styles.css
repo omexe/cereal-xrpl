@@ -586,3 +586,11 @@ dialog:has(.site-card) { width: min(560px, calc(100vw - 32px)); }
   .site-evidence { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .site-evidence dd { margin-bottom: 6px; }
 }
+
+/* sites: the "can't use this site" notice */
+.site-notice { display: flex; gap: 10px; align-items: flex-start; margin-top: 4px; padding: 12px; border-radius: 8px; border: 1px solid var(--color-error); background: var(--color-surface); color: var(--color-text-primary); font: var(--font-ui); }
+.site-notice > svg { width: var(--icon-control); height: var(--icon-control); flex-shrink: 0; color: var(--color-error); stroke-width: var(--icon-stroke); }
+.site-notice p { margin: 0 0 6px; overflow-wrap: anywhere; }
+.site-notice-heading { font: var(--font-control); color: var(--color-error); }
+.site-notice-hint { color: var(--color-text-secondary); }
+.site-notice .secondary-button { margin-top: 4px; }

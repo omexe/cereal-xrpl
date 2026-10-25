@@ -23,7 +23,7 @@ import tomllib
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
-from urllib.parse import urldefrag, urljoin, urlsplit
+from urllib.parse import quote, urldefrag, urljoin, urlsplit
 
 import requests
 from xrpl.core.addresscodec import is_valid_classic_address
@@ -384,12 +384,46 @@ def _why_not_rlusd(opt: dict) -> str | None:
     return "its RLUSD option is incomplete (price, payee or timeout missing)"
 
 
+# Bot walls: services sites use to keep automated visitors out. cereal names them so the owner knows why, and never
+# tries to get past one (a bot check is the site saying "no agents").
+_WALL_BODIES = [
+    ("Cloudflare", re.compile(r"challenge-platform|cf-turnstile|cf_chl_|<title>Just a moment\.\.\.</title>", re.I)),
+    ("DataDome", re.compile(r"captcha-delivery\.com|datadome", re.I)),
+    ("HUMAN (PerimeterX)", re.compile(r"px-captcha|perimeterx|_pxhd", re.I)),
+    ("Imperva", re.compile(r"_Incapsula_Resource|incapsula incident", re.I)),
+    ("Akamai", re.compile(r"Reference&#32;&#35;|akamai", re.I)),
+]
+
+
+def bot_wall(resp: requests.Response) -> str | None:
+    """The bot-protection service that answered instead of the site ("Cloudflare", "DataDome", ...), "a captcha" for an
+    unnamed one, or None when the answer is the site itself."""
+    h = resp.headers
+    if h.get("cf-mitigated", "").lower() == "challenge":
+        return "Cloudflare"
+    if h.get("x-datadome") or h.get("x-dd-b"):
+        return "DataDome"
+    if resp.status_code < 400:
+        return None
+    if "akamaighost" in h.get("server", "").lower() and resp.status_code == 403:
+        return "Akamai"
+    body = _text(resp)[:64_000]
+    for name, pattern in _WALL_BODIES:
+        if pattern.search(body):
+            return name
+    if re.search(r"captcha", body, re.I):
+        return "a captcha"
+    return None
+
+
 def _unreachable_reason(resp: requests.Response) -> str:
     code = resp.status_code
-    if resp.headers.get("cf-mitigated", "").lower() == "challenge":
-        return f"The site answered {code} with a bot check (captcha), which an agent cannot pass."
-    if code >= 400 and re.search(r"captcha|cf-turnstile|challenge-platform", _text(resp)[:64_000], re.I):
-        return f"The site answered {code} with a captcha, which an agent cannot pass."
+    wall = bot_wall(resp)
+    if wall:
+        host = urlsplit(resp.url or "").hostname or "This site"
+        what = "a captcha" if wall == "a captcha" else f"{wall}'s bot check"
+        return (f"{host} blocks automated agents with {what} (a captcha only a person in a browser can pass). "
+                "cereal does not try to get around it.")
     if code == 401:
         return "The site answered 401: it needs a login."
     if code == 403:
@@ -693,6 +727,27 @@ def _with_scheme(url: str) -> str:
     return f"https://{url}"
 
 
+ARCHIVE_API = "https://archive.org/wayback/available"
+
+
+def archived_copy(url: str, timeout: float = 8.0) -> dict | None:
+    """The Internet Archive's latest snapshot of a page: {url, timestamp (ISO date), source}, or None. A public archive
+    is a legitimate way to read a page whose live site blocks agents; it is a dated copy, never the live site."""
+    try:
+        resp = safe_get(f"{ARCHIVE_API}?url={quote(url, safe='')}", max_bytes=64_000, timeout=timeout)
+        snap = (resp.json().get("archived_snapshots") or {}).get("closest") or {}
+    except Exception:  # the archive is a convenience: any failure just means no copy is offered
+        return None
+    ts = str(snap.get("timestamp") or "")
+    if not snap.get("available") or str(snap.get("status")) != "200" or not re.fullmatch(r"\d{14}", ts):
+        return None
+    snap_url = str(snap.get("url") or "")
+    if not snap_url.startswith(("http://web.archive.org/", "https://web.archive.org/")):
+        return None
+    return {"url": "https://" + snap_url.split("://", 1)[1], "source": "Internet Archive",
+            "timestamp": f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]}T{ts[8:10]}:{ts[10:12]}:{ts[12:14]}Z"}
+
+
 def probe(url: str) -> dict:
     """What a site is and whether cereal could pay it. Never pays, never signs.
 
@@ -726,7 +781,8 @@ def probe(url: str) -> dict:
         origin, host = where(final_url)
         out = {"ok": True, "url": final_url, "origin": origin, "host": host,
                "kind": kind, "status": status, "title": None, "payment": None, "accepts": [], "reason": None,
-               "credential": None, "checks": [], "verdict": "block", "verdict_reasons": [], "trust_hint": "none"}
+               "credential": None, "checks": [], "verdict": "block", "verdict_reasons": [], "trust_hint": "none",
+               "blocked_by": None, "archive": None}
         out.update(kw)
         if kind in ("unpayable", "unreachable"):
             out["verdict_reasons"] = [out["reason"]]
@@ -743,9 +799,11 @@ def probe(url: str) -> dict:
 
     final = resp.url or url
     code = resp.status_code
+    wall = bot_wall(resp)
+    if wall:  # the bot wall's page ("Just a moment...") is not the site: no title; offer a public archived copy
+        return result("unreachable", final, code, reason=_unreachable_reason(resp), blocked_by=wall,
+                      archive=archived_copy(final))
     if 200 <= code < 300:
-        if resp.headers.get("cf-mitigated", "").lower() == "challenge":
-            return result("unreachable", final, code, reason=_unreachable_reason(resp))
         return result("free", final, code, title=_title(resp), verdict="ok", trust_hint="free")
     if code != 402:
         return result("unreachable", final, code, title=_title(resp), reason=_unreachable_reason(resp))

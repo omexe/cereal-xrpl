@@ -117,6 +117,10 @@ export interface SiteProbe {
   payment: SitePayment | null; accepts: { network?: string; asset?: string; amount?: string }[];
   reason: string | null; credential: string | null; checks: SiteCheck[];
   verdict: 'ok' | 'warn' | 'block'; verdict_reasons: string[]; trust_hint: SiteTrust | 'none';
+  /** The bot-protection service that answered instead of the site ("Cloudflare", "DataDome", "a captcha"), if any. */
+  blocked_by?: string | null;
+  /** A public archived copy of a page whose live site blocks agents (a dated snapshot, never the live site). */
+  archive?: { url: string; source: string; timestamp: string } | null;
 }
 export interface Site extends Omit<SiteProbe, 'ok'> {
   id: string; owner: string; name: string; trust: SiteTrust; blocked_reason: string | null;

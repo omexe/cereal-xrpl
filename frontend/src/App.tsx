@@ -201,6 +201,8 @@ export default function App() {
       void createFromPrompt();
       return;
     }
+    // A web address is never a rules edit: in any view it opens the site check.
+    if (isLive && /^https?:\/\//i.test(prompt.trim())) { openAddSite(prompt.trim()); setPrompt(''); return; }
     if (!selected || !editable) return;
     setRulesSentence(prompt.trim()); setPrompt(''); setPromptError(false); setModal('constraints');
   }

@@ -4,7 +4,7 @@ import type { AppActions } from '../appActions';
 import { loadSession, saveSession, type Session } from '../session';
 import { Dialog } from './Dialog';
 import { sitesChanged } from './sites/events';
-import { ProbeFindings, TrustNote } from './sites/SiteChecks';
+import { ProbeFindings, SiteNotice, TrustNote } from './sites/SiteChecks';
 import { blockedText, refusalMessage, TRUST_LABEL, trustOf } from './sites/siteText';
 
 /** "example.com/page" → "https://example.com/page"; "localhost:8004/x" → "http://localhost:8004/x" (local test
@@ -75,14 +75,17 @@ function AddSite({ app, url }: { app: AppActions; url?: string }) {
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const name = app.session?.user.name;
+  // Opened with an address (typed in the composer): check it right away, so the answer is the first thing shown.
+  const autoChecked = useRef(false);
+  useEffect(() => { if (url && !autoChecked.current) { autoChecked.current = true; void check(undefined, url); } }, [url]);  // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function check(event: FormEvent) {
-    event.preventDefault();
-    const target = normalizeUrl(address);
+  async function check(event?: FormEvent, override?: string) {
+    event?.preventDefault();
+    const target = normalizeUrl(override ?? address);
     if (!target || inFlight.current) return;
     inFlight.current = true;
     setBusy('checking'); setFailure(undefined); setProbe(undefined);
-    if (target !== address) setAddress(target);
+    if (target !== (override ?? address)) setAddress(target); else if (override) setAddress(override);
     try {
       const out = await api.probeSite(target);
       if (mounted.current) setProbe(out);
@@ -133,12 +136,14 @@ function AddSite({ app, url }: { app: AppActions; url?: string }) {
         <strong>{probe.title || probe.host}</strong>
         <span className="site-card-url">{probe.url}</span>
       </div>
-      <ProbeFindings probe={probe} />
-      <TrustNote trust={trust} prefix={trust === 'none' ? undefined : 'Will be added as'} />
+      {trust === 'none' ? <SiteNotice probe={probe} onUseArchive={archived => void check(undefined, archived)} /> : <>
+        <ProbeFindings probe={probe} />
+        <TrustNote trust={trust} prefix="Will be added as" />
+      </>}
     </section>}
     {failure && <div className="site-error" role="alert"><p>{failure.message}</p>
       {failure.site && <button className="sites-signout" onClick={() => { app.openSite(failure.site!.id); app.close(); }}>See the blocked site</button>}</div>}
-    {probe && <button type="button" className="primary-button form-submit" disabled={!!busy} onClick={add}>
+    {probe && trust !== 'none' && <button type="button" className="primary-button form-submit" disabled={!!busy} onClick={add}>
       {busy === 'adding' ? 'Adding…' : 'Add to my sites'}</button>}
     <p className="demo-note">Adding to {name ? `${name}’s` : 'your'} sites · private to you.</p>
   </Dialog>;

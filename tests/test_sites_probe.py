@@ -801,3 +801,55 @@ def test_route_turns_bad_input_into_a_refusal_not_an_http_error(http, kw):
 def test_route_refuses_unsafe_urls(http, web):
     r = http.post("/sites/probe", json={"url": "http://169.254.169.254/latest/meta-data"})
     assert r.status_code == 200 and r.json()["refused"] == "unsafe_url" and web.calls == []
+
+
+# ---- bot walls: named, never bypassed, with a public archived copy when one exists ------------------------------------
+
+def _archive_route(web, dns, page: str, body: dict | None):
+    dns["archive.org"] = [PUBLIC_IP]
+    from urllib.parse import quote
+    url = f"{sp.ARCHIVE_API}?url={quote(page, safe='')}"
+    web.routes[url] = (200, {"content-type": "application/json"}, json.dumps(body).encode()) if body is not None \
+        else (503, {"content-type": "text/plain"}, b"down")
+
+
+def test_a_cloudflare_wall_is_named_has_no_fake_title_and_offers_the_archived_copy(web, dns, ledger):
+    web.routes["https://example.com/"] = html_page("Just a moment...", status=403, headers={"cf-mitigated": "challenge",
+                                                                                          "server": "cloudflare"})
+    _archive_route(web, dns, "https://example.com/", {"archived_snapshots": {"closest": {
+        "available": True, "status": "200", "timestamp": "20261006135037",
+        "url": "http://web.archive.org/web/20261006135037/https://example.com/"}}})
+    r = sp.probe("https://example.com/")
+    assert r["kind"] == "unreachable" and r["blocked_by"] == "Cloudflare" and r["title"] is None
+    assert "example.com blocks automated agents with Cloudflare's bot check" in r["reason"]
+    assert "does not try to get around it" in r["reason"]
+    assert r["archive"] == {"url": "https://web.archive.org/web/20261006135037/https://example.com/",
+                            "source": "Internet Archive", "timestamp": "2026-10-06T13:50:37Z"}
+
+
+@pytest.mark.parametrize("status, headers, body, name", [
+    (403, {"x-datadome": "protected"}, b"blocked", "DataDome"),
+    (403, {}, b"<script src='https://ct.captcha-delivery.com/c.js'></script>", "DataDome"),
+    (403, {}, b"<div id='px-captcha'></div>", "HUMAN (PerimeterX)"),
+    (403, {"server": "AkamaiGHost"}, b"Access Denied", "Akamai"),
+    (403, {}, b"<iframe src='/_Incapsula_Resource?x'></iframe>", "Imperva"),
+    (403, {}, b"<div class='g-recaptcha'>please solve this captcha</div>", "a captcha"),
+])
+def test_other_bot_walls_are_named(web, dns, ledger, status, headers, body, name):
+    web.routes["https://example.com/page"] = (status, {"content-type": "text/html", **headers}, body)
+    r = sp.probe("https://example.com/page")
+    assert r["kind"] == "unreachable" and r["blocked_by"] == name and "captcha" in r["reason"]
+    assert r["archive"] is None  # the archive lookup fails here (no route): no copy offered, no crash
+
+
+def test_an_archive_answer_without_a_good_snapshot_offers_nothing(web, dns, ledger):
+    web.routes["https://example.com/"] = html_page("Just a moment...", status=403, headers={"cf-mitigated": "challenge"})
+    _archive_route(web, dns, "https://example.com/", {"archived_snapshots": {"closest": {
+        "available": True, "status": "404", "timestamp": "20261006135037", "url": "http://web.archive.org/x"}}})
+    assert sp.probe("https://example.com/")["archive"] is None
+
+
+def test_a_plain_403_is_not_called_a_bot_wall(web, dns, ledger):
+    web.routes["https://example.com/page"] = (403, {"content-type": "text/html"}, b"forbidden")
+    r = sp.probe("https://example.com/page")
+    assert r["kind"] == "unreachable" and r["blocked_by"] is None and r["archive"] is None

@@ -60,6 +60,13 @@ Probe (`POST /sites/probe {url}`; also what `POST /sites` stores):
  "verdict": "warn", "verdict_reasons": ["The address is new: created 2 hours ago."], "trust_hint": "private"}
 ```
 
+Bot walls: a site that answers with a bot-protection service instead of itself (Cloudflare's challenge, DataDome,
+HUMAN/PerimeterX, Imperva, Akamai, any captcha) is `unreachable` with `"blocked_by": "<service>"`, no title (the wall's
+"Just a moment..." is not the site), a plain reason, and `"archive": {"url", "source": "Internet Archive", "timestamp"}`
+when the Internet Archive has a readable snapshot. cereal names the wall and never tries to get past it; the app
+shows a "<host> blocks AI agents" notice and offers the dated archived copy, which is a free site. Every probe carries
+`blocked_by` and `archive` (null when not applicable).
+
 Unsafe or malformed URLs: `{"ok": false, "refused": "unsafe_url" | "invalid_url", "reason": "…"}`.
 
 Site (`GET /sites`, `POST /sites`): the probe fields plus

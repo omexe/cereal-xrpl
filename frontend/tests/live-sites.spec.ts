@@ -15,6 +15,9 @@ const E_URL = 'http://localhost:8005/research/report';
 const F_URL = 'http://localhost:8006/research/report';
 const USDC_URL = 'http://localhost:8004/usdc/report';
 const FREE_URL = 'https://example.com';
+const WALLED_URL = 'https://www.gatorade.com/';
+const ARCHIVE_URL = 'https://web.archive.org/web/20261006135037/https://www.gatorade.com/';
+const WALL_REASON = "www.gatorade.com blocks automated agents with Cloudflare's bot check (a captcha only a person in a browser can pass). cereal does not try to get around it.";
 const USDC_REASON = 'This paywall only takes USDC on Base Sepolia (eip155:84532); cereal pays RLUSD on XRPL testnet (xrpl:1).';
 const TOKEN = 'tok_test_123';
 const USER = { id: 'u_test', name: 'Ana' };
@@ -56,6 +59,9 @@ const PROBES: Record<string, Json> = {
     accepts: [{ network: 'eip155:84532', asset: USDC_BASE_SEPOLIA, amount: '100000', scheme: 'exact', label: 'USDC on Base Sepolia (eip155:84532)' }],
     reason: USDC_REASON, verdict: 'block', verdict_reasons: [USDC_REASON], trust_hint: 'none' },
   [FREE_URL]: { ...base(FREE_URL), kind: 'free', status: 200, title: 'Example Domain', verdict: 'ok', trust_hint: 'free' },
+  [WALLED_URL]: { ...base(WALLED_URL), kind: 'unreachable', status: 403, reason: WALL_REASON, verdict: 'block', verdict_reasons: [WALL_REASON],
+    trust_hint: 'none', blocked_by: 'Cloudflare', archive: { url: ARCHIVE_URL, source: 'Internet Archive', timestamp: '2026-10-06T13:50:37Z' } },
+  [ARCHIVE_URL]: { ...base(ARCHIVE_URL), kind: 'free', status: 200, title: 'Gatorade (archived)', verdict: 'ok', trust_hint: 'free' },
 };
 
 const DELIVERED = { title: 'Vendor D research report', findings: ['RLUSD settles on XRPL testnet in 3–5 s', '<b>not markup</b>'] };
@@ -237,7 +243,7 @@ test('a URL in the composer checks a payable private site; adding it opens the s
 
   const dialog = addDialog(page);
   await expect(dialog.getByLabel('Site address')).toHaveValue(D_URL);
-  await dialog.getByRole('button', { name: 'Check site' }).click();
+  // Opened from the composer with an address: the check runs by itself.
   const card = dialog.getByRole('region', { name: 'Site check' });
   await expect(card).toHaveAttribute('data-kind', 'payable');
   await expect(card.locator('.site-kind')).toHaveText('Paid: 0.10 RLUSD to rsV4kQ…DqJ2');
@@ -302,14 +308,37 @@ test('a USDC-only paywall is refused with what it wants', async ({ page }) => {
   await page.goto('/');
   const dialog = await checkSite(page, USDC_URL);
   const card = dialog.getByRole('region', { name: 'Site check' });
-  await expect(card.locator('.site-kind')).toHaveText('Can’t pay: wants USDC on Base Sepolia');
-  await expect(card.locator('.site-reason')).toHaveText(USDC_REASON);
-  await expect(card.locator('.site-verdict, .site-checks')).toHaveCount(0);
-  await expect(card.locator('.site-trust')).toHaveText('Can’t be added');
-  await dialog.getByRole('button', { name: 'Add to my sites' }).click();
-  await expect(dialog.getByRole('alert')).toHaveText(`An agent cannot use this site: ${USDC_REASON}`);
+  const notice = card.getByRole('alert');
+  await expect(notice.locator('.site-notice-heading')).toHaveText('cereal can’t pay localhost');
+  await expect(notice).toContainText(USDC_REASON);
+  await expect(card.locator('.site-verdict, .site-checks, .site-trust')).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Add to my sites' })).toHaveCount(0);  // no dead end: it can't be added
   expect(service.sites).toHaveLength(0);
   await expect(sitesSection(page).getByRole('button', { name: 'Add your first site' })).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('a site behind a bot wall says so plainly, and offers its public archived copy', async ({ page }) => {
+  const { service, errors } = await setup(page);
+  await page.goto('/');
+  // Typed in the composer: the check runs right away, so the answer is the first thing shown.
+  await page.getByRole('textbox', { name: 'Describe a new wallet in plain English' }).fill(WALLED_URL);
+  await page.getByRole('textbox', { name: 'Describe a new wallet in plain English' }).press('Enter');
+  const dialog = addDialog(page);
+  const card = dialog.getByRole('region', { name: 'Site check' });
+  const notice = card.getByRole('alert');
+  await expect(notice.locator('.site-notice-heading')).toHaveText('www.gatorade.com blocks AI agents');
+  await expect(notice).toContainText('Cloudflare’s bot protection');
+  await expect(notice).toContainText('won’t try to get around it');
+  await expect(notice).toContainText('Nothing was paid.');
+  await expect(card.locator('.site-card-head strong')).toHaveText('www.gatorade.com');  // not the wall's "Just a moment..."
+  await expect(dialog.getByRole('button', { name: 'Add to my sites' })).toHaveCount(0);
+  await notice.getByRole('button', { name: 'Use the archived copy' }).click();
+  await expect(dialog.getByLabel('Site address')).toHaveValue(ARCHIVE_URL);
+  await expect(card.locator('.site-kind')).toHaveText('Free page');
+  await dialog.getByRole('button', { name: 'Add to my sites' }).click();
+  await expect(page.getByRole('status').filter({ hasText: 'added to your sites as free' })).toBeVisible();
+  expect(service.sites.map(s => s.url)).toEqual([ARCHIVE_URL]);
   expect(errors).toEqual([]);
 });
 
