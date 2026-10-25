@@ -1,3 +1,5 @@
+import type { LiveInfo } from './live';
+
 export interface Constraints {
   spend: number;
   days: number;
@@ -25,6 +27,8 @@ const sampleTransactions: DemoTransaction[] = [
 
 export interface Wallet {
   id: string;
+  /** live mode only: the backend record and its exact amounts (see live.ts). Mock wallets never have it. */
+  live?: LiveInfo;
   name: string;
   description?: string;
   mockDataVersion?: number;

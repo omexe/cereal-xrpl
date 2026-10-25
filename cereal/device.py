@@ -14,7 +14,6 @@ import os
 import re
 import subprocess
 import tempfile
-import threading
 import time
 import urllib.request
 
@@ -23,9 +22,10 @@ from xrpl.core.binarycodec import decode
 from xrpl.models.transactions.transaction import Transaction
 
 from . import config
+from .xlock import ProcessLock
 from .ledger import prepare, submit_capture
 
-_one_at_a_time = threading.Lock()  # one device: two signing sessions at once can wedge the emulator
+_one_at_a_time = ProcessLock("speculos")  # one device, machine-wide: two signing sessions at once can wedge the emulator
 
 
 def _screen() -> str:

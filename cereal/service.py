@@ -21,6 +21,7 @@ from xrpl.wallet import Wallet
 from . import ap4m, config, deployments, device, directory, keystore, subwallets, vendors
 from .burn import reclaim as ledger_reclaim, retire as ledger_retire
 from .fund import fund_burner, funding_payment
+from .xlock import ProcessLock
 from .ledger import account_info, client, cosign_and_submit, cosign_combine, decode_memos, prepare, rlusd_balance, submit_capture
 
 from contextlib import asynccontextmanager
@@ -34,7 +35,7 @@ async def _lifespan(_app):
 
 
 app = FastAPI(title="cereal service", lifespan=_lifespan)
-_main_wallet = threading.Lock()  # one main-wallet transaction sequence at a time
+_main_wallet = ProcessLock("treasury")  # one main-wallet transaction sequence at a time, across every local service
 
 
 class DeployRequest(BaseModel):
@@ -674,3 +675,10 @@ def vendor_revoke(address: str, req: VendorRevokeRequest) -> dict:
     """One public transaction blocks this vendor for every cereal customer."""
     return vendors.revoke(config.wallet("CREDENTIAL_ISSUER"), address, client(), req.reason, req.report,
                           vendor_class=req.vendor_class)
+
+
+# The React app's feature routers (cereal/routes/): run a task, edit rules, top up, folders and archive.
+from .routes import funding as _funding, rules as _rules, runs as _runs, workspace as _workspace  # noqa: E402
+
+for _router in (_runs.router, _rules.router, _funding.router, _workspace.router):
+    app.include_router(_router)

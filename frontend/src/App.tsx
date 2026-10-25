@@ -1,88 +1,120 @@
 import { useEffect, useState, type DragEvent, type FormEvent } from 'react';
 import { ArrowUp, ChevronDown, ChevronUp, Folder, Home03, Menu01, Plus, Settings01 } from '@untitledui/icons';
-import { Dialog } from './components/Dialog';
+import { api, describeError } from './api';
+import type { AppActions } from './appActions';
+import { ConstraintsDialog } from './components/ConstraintsDialog';
+import { FolderDialog } from './components/FolderDialog';
+import { FundsDialog } from './components/FundsDialog';
+import { NewWalletDialog } from './components/NewWalletDialog';
+import { SettingsDialog } from './components/SettingsDialog';
+import { WalletActions } from './components/WalletActions';
 import { WalletDetail } from './components/WalletDetail';
-import { defaultConstraints, loadWorkspace, populateMockWallet, parseConstraints, STORAGE_KEY, type Constraints, type Wallet } from './wallets';
+import { formatAmount } from './format';
+import { isActive } from './live';
+import { isLive } from './mode';
+import { useLiveData } from './store';
+import { loadWorkspace, parseConstraints, STORAGE_KEY, type Wallet, type Workspace } from './wallets';
 
 type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | null;
-const money = (amount: number) => `$${amount.toFixed(2)}`;
+const emptyWorkspace: Workspace = { wallets: [], folders: [] };
 
 export default function App() {
-  const [workspace, setWorkspace] = useState(loadWorkspace);
-  const [selectedId, setSelectedId] = useState(() => workspace.wallets.find(w => !w.archived)?.id);
+  // Live mode never loads or seeds the mock workspace; every wallet comes from the cereal service.
+  const [mockWorkspace, setWorkspace] = useState<Workspace>(() => isLive ? emptyWorkspace : loadWorkspace());
+  const [selectedId, setSelectedId] = useState(() => mockWorkspace.wallets.find(w => !w.archived)?.id);
+  const live = useLiveData(isLive, selectedId);
+  const workspace = isLive ? live.workspace : mockWorkspace;
   const [activeView, setActiveView] = useState<'home' | 'wallet'>('home');
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['research-2']);
   const [modal, setModal] = useState<Modal>(null);
   const [mobileNav, setMobileNav] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [walletDescription, setWalletDescription] = useState('');
+  const [rulesSentence, setRulesSentence] = useState('');
   const [showAllWallets, setShowAllWallets] = useState(false);
   const [message, setMessage] = useState('');
   const [promptError, setPromptError] = useState(false);
-  const [draftConstraints, setDraftConstraints] = useState<Constraints>(defaultConstraints);
+  const [messageError, setMessageError] = useState(false);
   const [draggingWalletId, setDraggingWalletId] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const activeWallets = workspace.wallets.filter(w => !w.archived);
+  const runningWallets = activeWallets.filter(isActive);
   const selected = workspace.wallets.find(w => w.id === selectedId);
   const total = activeWallets.reduce((sum, wallet) => sum + wallet.balance, 0);
   const isHome = activeView === 'home';
-  const visibleWallets = isHome ? (showAllWallets ? activeWallets : activeWallets.slice(0, 4)) : activeWallets.filter(wallet => !wallet.folderId);
+  // Live home lists running wallets first; finished ones (reclaimed, retired, ...) stay one click away.
+  const homeWallets = isLive ? runningWallets : activeWallets;
+  const homeShown = Math.min(4, homeWallets.length);
+  const visibleWallets = isHome ? (showAllWallets ? activeWallets : homeWallets.slice(0, 4)) : activeWallets.filter(wallet => !wallet.folderId);
   const activeNavigation = modal === 'wallet' ? 'new-wallet' : modal === 'settings' ? 'settings' : activeView;
+  const editable = !!selected && !selected.archived && isActive(selected);
 
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(workspace)); }
+    if (isLive) return;
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(mockWorkspace)); }
     catch { setMessage('Changes are available for this session. Browser storage is unavailable.'); }
-  }, [workspace]);
+  }, [mockWorkspace]);
   useEffect(() => {
-    if (!message || promptError) return;
+    if (!message || promptError || messageError) return;
     const timer = window.setTimeout(() => setMessage(''), 5000);
     return () => clearTimeout(timer);
-  }, [message, promptError]);
+  }, [message, promptError, messageError]);
 
+  function notify(text: string, error = false) { setMessage(text); setMessageError(error); }
   function selectWallet(id: string) {
     setSelectedId(id); setActiveView('wallet'); setMobileNav(false);
-    setPrompt(''); setPromptError(false); setMessage('');
+    setPrompt(''); setPromptError(false); notify('');
     const folderId = workspace.wallets.find(wallet => wallet.id === id)?.folderId;
     if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
   }
+  function showWallet(id: string, folderId?: string) {
+    if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
+    setSelectedId(id); setActiveView('wallet'); setMobileNav(false); setPrompt(''); setPromptError(false); setWalletDescription('');
+  }
   function goHome() {
     setSelectedId(activeWallets[0]?.id); setActiveView('home'); setMobileNav(false);
-    setPrompt(''); setPromptError(false); setMessage('');
+    setPrompt(''); setPromptError(false); notify('');
   }
-  function updateSelected(update: Partial<Wallet>) {
-    setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === selectedId ? { ...w, ...update } : w) }));
+  function updateWallet(id: string, update: Partial<Wallet>) {
+    setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === id ? { ...w, ...update } : w) }));
   }
-  function openConstraints() { if (selected) { setDraftConstraints({ ...selected.constraints }); setModal('constraints'); } }
-  function createWallet(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const name = String(data.get('name')).trim();
-    if (!name) return;
-    const id = crypto.randomUUID();
-    const folderId = String(data.get('folder') || '');
-    setWorkspace(previous => ({ ...previous, wallets: [...previous.wallets, populateMockWallet({
-      id, name, description: String(data.get('description') || '').trim(), transactions: [], balance: 0, archived: false, folderId: folderId || undefined,
-      constraints: { ...defaultConstraints, merchants: [...defaultConstraints.merchants] },
-    })] }));
-    if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
-    setSelectedId(id); setActiveView('wallet'); setModal(null); setMobileNav(false); setPrompt(''); setWalletDescription(''); setMessage('Demo wallet created with mock funds and activity.');
+  function openConstraints() { if (selected) { setRulesSentence(''); setModal('constraints'); } }
+  function openFunds() {
+    if (!selected || !isActive(selected) || selected.archived) setSelectedId(runningWallets[0]?.id);
+    setModal('funds');
   }
-  function toggleArchive() {
+  async function toggleArchive() {
     if (!selected) return;
-    updateSelected({ archived: !selected.archived });
+    if (isLive) {
+      try {
+        const out = await api.updateMeta(selected.id, { archived: !selected.archived });
+        live.upsert(out.wallet);
+        notify(selected.archived ? 'Wallet restored.' : 'Wallet archived. Its funds and account are unchanged.'); setModal(null);
+      } catch (e) { notify(describeError(e), true); }
+      return;
+    }
+    updateWallet(selected.id, { archived: !selected.archived });
     if (!selected.archived) setSelectedId(activeWallets.find(w => w.id !== selected.id)?.id);
-    setMessage(selected.archived ? 'Wallet restored.' : 'Wallet archived.'); setModal(null);
+    notify(selected.archived ? 'Wallet restored.' : 'Wallet archived.'); setModal(null);
   }
-  function moveWallet(id: string, folderId?: string) {
+  async function moveWallet(id: string, folderId?: string) {
     const wallet = workspace.wallets.find(wallet => wallet.id === id && !wallet.archived);
     const folder = workspace.folders.find(folder => folder.id === folderId);
     if (!wallet || (folderId && !folder)) return;
     if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
     if (id === selectedId) setActiveView('wallet');
     if (wallet.folderId === folderId) return;
+    if (isLive) {
+      try {
+        const out = await api.updateMeta(id, { folder: folder?.name ?? null });
+        live.upsert(out.wallet);
+        notify(`Wallet moved to ${folder?.name ?? 'Disposable Wallets'}.`);
+      } catch (e) { notify(describeError(e), true); }
+      return;
+    }
     setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(wallet => wallet.id === id ? { ...wallet, folderId } : wallet) }));
     setPromptError(false);
-    setMessage(`Wallet moved to ${folder?.name ?? 'Disposable Wallets'}.`);
+    notify(`Wallet moved to ${folder?.name ?? 'Disposable Wallets'}.`);
   }
   function endDrag() { setDraggingWalletId(null); setDropTarget(null); }
   function dropHandlers(folderId?: string) {
@@ -115,17 +147,20 @@ export default function App() {
       setWalletDescription(prompt.trim()); setModal('wallet');
       return;
     }
-    if (!selected || selected.archived) return;
+    if (!selected || !editable) return;
+    if (isLive) { setRulesSentence(prompt.trim()); setPrompt(''); setModal('constraints'); return; }
     const constraints = parseConstraints(prompt);
     if (!constraints) {
       setPromptError(true);
-      setMessage('Try: Spend up to $20 over 2 days, only at HubSpot, Clearbit and Apollo. Ask me above $5. Sweep back when done.');
+      notify('Try: Spend up to $20 over 2 days, only at HubSpot, Clearbit and Apollo. Ask me above $5. Sweep back when done.');
       return;
     }
-    updateSelected({ constraints }); setPrompt(''); setPromptError(false); setMessage('Demo wallet constraints updated.');
+    updateWallet(selected.id, { constraints }); setPrompt(''); setPromptError(false); notify('Demo wallet constraints updated.');
   }
   function walletRow(wallet: Wallet, nested = false) {
-    return <button key={wallet.id} data-wallet-id={wallet.id} className={`wallet-row ${nested ? 'nested' : ''} ${wallet.archived ? 'archived' : ''} ${draggingWalletId === wallet.id ? 'is-dragging' : ''}`}
+    const finished = !isActive(wallet);
+    return <button key={wallet.id} data-wallet-id={wallet.id} data-status={wallet.live?.status} title={wallet.live ? `${wallet.name} · ${wallet.live.status}` : undefined}
+      className={`wallet-row ${nested ? 'nested' : ''} ${wallet.archived ? 'archived' : ''} ${finished ? 'finished' : ''} ${draggingWalletId === wallet.id ? 'is-dragging' : ''}`}
       aria-label={`Open ${wallet.name}`} aria-current={activeNavigation === 'wallet' && selectedId === wallet.id ? 'true' : undefined}
       draggable={!wallet.archived} onDragStart={event => {
         if (wallet.archived) { event.preventDefault(); return; }
@@ -135,6 +170,14 @@ export default function App() {
       }} onDragEnd={endDrag}
       onClick={() => selectWallet(wallet.id)}><span className="wallet-dot" /><span>{wallet.name}</span></button>;
   }
+
+  const app: AppActions = {
+    workspace, activeWallets, selected, selectedId, setSelectedId, isHome, live, setWorkspace, updateWallet, showWallet,
+    moveWallet, toggleArchive, notify, close: () => { setModal(null); setWalletDescription(''); setRulesSentence(''); },
+  };
+  const liveBanner = isLive && (live.status === 'error'
+    ? <p className="live-banner error" role="alert">{live.error ?? 'The cereal service is not reachable.'} Retrying every 5 seconds.</p>
+    : live.status === 'loading' ? <p className="live-banner" role="status">Connecting to the cereal service…</p> : null);
 
   return <div className={`app-shell ${isHome ? 'home-view' : 'wallet-view'}`}>
     <header className="mobile-header"><button className="icon-button" aria-label="Toggle navigation" aria-expanded={mobileNav} onClick={() => setMobileNav(!mobileNav)}><Menu01 /></button><span>Cereal</span><span className="mobile-count">{activeWallets.length} wallets</span></header>
@@ -160,8 +203,8 @@ export default function App() {
       </section>
       <section className={`sidebar-section wallet-drop-zone ${dropTarget === 'disposable' ? 'is-drop-target' : ''}`} data-wallet-group="disposable" aria-labelledby="disposable-heading" {...dropHandlers()}><h2 id="disposable-heading" className="section-heading">{isHome ? 'Active Wallets' : 'Disposable Wallets'}</h2>
         {visibleWallets.map(w => walletRow(w))}
-        {isHome && activeWallets.length > 4 && <button className="wallet-more" onClick={() => setShowAllWallets(!showAllWallets)}>{showAllWallets ? 'Show fewer' : `+ ${activeWallets.length - 4} more`}</button>}
-        {!activeWallets.length && <button className="empty-wallets" onClick={() => setModal('wallet')}>Create your first wallet</button>}
+        {isHome && activeWallets.length > homeShown && <button className="wallet-more" onClick={() => setShowAllWallets(!showAllWallets)}>{showAllWallets ? 'Show fewer' : `+ ${activeWallets.length - homeShown} more`}</button>}
+        {!activeWallets.length && (!isLive || live.status === 'ready') && <button className="empty-wallets" onClick={() => setModal('wallet')}>Create your first wallet</button>}
       </section>
       <section className="sidebar-section"><h2 className="section-heading muted">Archived Wallets</h2>
         {workspace.wallets.filter(w => w.archived).map(w => walletRow(w))}
@@ -170,68 +213,39 @@ export default function App() {
 
     <main>
       <div className="workspace-content">
+      {liveBanner}
       {isHome ? <section className="home-stage" aria-label="Wallet home">
-        <div className="home-summary">
-          <h1>{money(total)}</h1>
+        {isLive ? <div className="home-summary">
+          <h1>{live.main ? formatAmount(live.main.rlusd) : '—'}</h1>
+          <p>Main wallet on XRPL testnet · {runningWallets.length} active {runningWallets.length === 1 ? 'wallet' : 'wallets'}{live.main && Number(live.main.outstanding_budget) > 0 ? ` · ${formatAmount(live.main.outstanding_budget)} out in wallets` : ''}</p>
+          <button className="primary-button" disabled={live.status !== 'ready'} onClick={() => { if (runningWallets.length) openFunds(); else { setWalletDescription(''); setModal('wallet'); } }}>{runningWallets.length ? 'Add funds' : 'Create a wallet'}</button>
+        </div> : <div className="home-summary">
+          <h1>{formatAmount(total)}</h1>
           <p>Total demo balance · {activeWallets.length} active {activeWallets.length === 1 ? 'wallet' : 'wallets'}</p>
           <button className="primary-button" onClick={() => { if (activeWallets.length) setModal('funds'); else { setWalletDescription(''); setModal('wallet'); } }}>{activeWallets.length ? 'Add funds' : 'Create a wallet'}</button>
-        </div>
+        </div>}
         <div className="home-illustration"><img src="/assets/home-organism.svg" width="640" height="620" alt="" /></div>
-      </section> : selected ? <WalletDetail wallet={selected} onAddFunds={() => setModal('funds')} onEditConstraints={openConstraints} onRestore={toggleArchive} />
+      </section> : selected ? <WalletDetail wallet={selected} onAddFunds={openFunds} onEditConstraints={openConstraints} onRestore={toggleArchive}
+          actions={<WalletActions app={app} wallet={selected} />} />
         : <div className="empty-details"><h1>Create a wallet<br />for your next task.</h1><button className="primary-button" onClick={() => setModal('wallet')}>Create a wallet</button></div>}
 
 
       </div>
       <footer className="composer">
-      <p id="status-message" role={promptError ? 'alert' : 'status'} className={`status-message ${promptError ? 'error' : ''}`}>{message}</p>
+      <p id="status-message" role={promptError || messageError ? 'alert' : 'status'} className={`status-message ${promptError || messageError ? 'error' : ''}`}>{message}</p>
       <form className="prompt-form" onSubmit={applyPrompt}>
         <input aria-label={isHome ? 'Describe a new wallet in plain English' : 'Edit wallet spending rules'} aria-invalid={promptError} aria-describedby={promptError ? 'status-message' : undefined}
-          placeholder={isHome ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!isHome && (!selected || selected.archived)}
+          placeholder={isHome ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected && !editable ? 'This wallet is finished; its rules no longer change' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!isHome && !editable}
           onChange={event => { setPrompt(event.target.value); setPromptError(false); }} />
-        <button className="send-button" aria-label={isHome ? 'Create wallet from description' : 'Apply wallet constraints'} disabled={!prompt.trim() || (!isHome && (!selected || selected.archived))}><ArrowUp /></button>
+        <button className="send-button" aria-label={isHome ? 'Create wallet from description' : 'Apply wallet constraints'} disabled={!prompt.trim() || (!isHome && !editable)}><ArrowUp /></button>
       </form>
       </footer>
     </main>
 
-    {modal === 'wallet' && <Dialog title="New wallet" onClose={() => setModal(null)}><form onSubmit={createWallet}>
-      <p className="dialog-description">Create a wallet for an agent task. Mock funds, spending rules, and sample activity are included.</p>
-      <label>Wallet name<input name="name" required maxLength={80} placeholder="e.g. Lead enrichment" autoFocus /></label>
-      <label>Task description<textarea name="description" maxLength={1000} defaultValue={walletDescription} placeholder="What should this wallet be used for?" /></label>
-      <label>Folder<select name="folder"><option value="">Disposable wallets</option>{workspace.folders.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
-      <p className="demo-note">Demo wallet · stored in this browser · no on-chain account is created.</p>
-      <button className="primary-button form-submit">Create wallet</button>
-    </form></Dialog>}
-    {modal === 'folder' && <Dialog title="New folder" onClose={() => setModal(null)}><form onSubmit={event => {
-      event.preventDefault(); const name = String(new FormData(event.currentTarget).get('name')).trim(); if (!name) return;
-      setWorkspace(previous => ({ ...previous, folders: [...previous.folders, { id: crypto.randomUUID(), name }] })); setModal(null);
-    }}><label>Folder name<input name="name" required maxLength={60} autoFocus /></label><button className="primary-button form-submit">Create folder</button></form></Dialog>}
-    {modal === 'funds' && selected && <Dialog title="Add demo funds" onClose={() => setModal(null)}><form onSubmit={event => {
-      event.preventDefault(); const amount = Number(new FormData(event.currentTarget).get('amount'));
-      if (!Number.isFinite(amount) || amount <= 0 || amount > 1000000) return;
-      updateSelected({ balance: Math.round((selected.balance + amount) * 100) / 100 }); setModal(null); setMessage('Demo balance updated. No payment was made.');
-    }}><p className="dialog-description">Available balance: {money(selected.balance)}. This changes the demo balance only.</p>{isHome && <label>Wallet to fund<select value={selectedId} onChange={event => setSelectedId(event.target.value)}>{activeWallets.map(wallet => <option key={wallet.id} value={wallet.id}>{wallet.name}</option>)}</select></label>}<label>Amount (USD)<input name="amount" type="number" min="0.01" max="1000000" step="0.01" placeholder="100.00" required autoFocus /></label><button className="primary-button form-submit">Add demo funds</button></form></Dialog>}
-    {modal === 'constraints' && selected && <Dialog title="Wallet constraints" onClose={() => setModal(null)}><form onSubmit={event => {
-      event.preventDefault(); if (selected.archived) return;
-      const data = new FormData(event.currentTarget);
-      const merchants = String(data.get('merchants')).split(',').map(m => m.trim()).filter(Boolean);
-      if (!merchants.length) return;
-      updateSelected({ constraints: { ...draftConstraints, merchants } }); setModal(null); setMessage('Demo wallet constraints updated.');
-    }}><p className="dialog-description">Set spending rules for {selected.name}. Rules are saved for this demo; no payments are executed.</p>
-      <div className="form-grid"><label>Spend limit ($)<input type="number" min="0.01" step="0.01" required value={draftConstraints.spend} onChange={e => setDraftConstraints({ ...draftConstraints, spend: +e.target.value })} autoFocus /></label>
-      <label>Duration (days)<input type="number" min="1" max="365" step="1" required value={draftConstraints.days} onChange={e => setDraftConstraints({ ...draftConstraints, days: +e.target.value })} /></label></div>
-      <label>Allowed merchants<input name="merchants" required defaultValue={draftConstraints.merchants.join(', ')} /></label>
-      <label>Ask for approval above ($)<input type="number" min="0" step="0.01" required value={draftConstraints.approval} onChange={e => setDraftConstraints({ ...draftConstraints, approval: +e.target.value })} /></label>
-      <label className="checkbox-label"><input type="checkbox" checked={draftConstraints.sweep} onChange={e => setDraftConstraints({ ...draftConstraints, sweep: e.target.checked })} />Sweep back when done</label>
-      <button className="primary-button form-submit" disabled={selected.archived}>Save constraints</button>
-    </form></Dialog>}
-    {modal === 'settings' && <Dialog title="Workspace settings" onClose={() => setModal(null)}>
-      <div className="settings-summary"><span>Mode</span><strong>Local demo</strong><span>Active wallets</span><strong>{activeWallets.length}</strong><span>Archived wallets</span><strong>{workspace.wallets.filter(w => w.archived).length}</strong></div>
-      <p className="dialog-description">Wallets, balances, and constraints are simulated and saved in this browser. No wallet service or Ledger device is connected.</p>
-      {selected && <div className="settings-wallet"><p>Selected wallet</p><strong>{selected.name}</strong>
-        {!selected.archived && <label>Wallet folder<select value={selected.folderId ?? ''} onChange={event => moveWallet(selected.id, event.target.value || undefined)}>
-          <option value="">Disposable Wallets</option>{workspace.folders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-        </select></label>}
-        <button className="secondary-button" onClick={toggleArchive}>{selected.archived ? 'Restore selected wallet' : 'Archive selected wallet'}</button></div>}
-    </Dialog>}
+    {modal === 'wallet' && <NewWalletDialog app={app} description={walletDescription} />}
+    {modal === 'folder' && <FolderDialog app={app} />}
+    {modal === 'funds' && selected && <FundsDialog app={app} />}
+    {modal === 'constraints' && selected && <ConstraintsDialog app={app} sentence={rulesSentence || undefined} />}
+    {modal === 'settings' && <SettingsDialog app={app} />}
   </div>;
 }

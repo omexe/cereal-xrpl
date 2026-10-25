@@ -7,15 +7,21 @@ React + TypeScript + Vite implementation of Figma home screen `21:1489` and wall
 ```sh
 cd frontend
 npm ci
-npm run dev
+npm run dev        # live: http://127.0.0.1:5180, data from the cereal service (CEREAL_API, default :8001)
+npm run dev:mock   # mock: browser-only demo data, no backend
 ```
+
+Live mode is the default. Start the service first (`make service` in the repo root); Vite proxies `/api` to it, so the
+browser never holds a credential and no CORS setup is needed. Port 5180 keeps clear of the read-only `web/` dashboard
+on 5173. Live mode never seeds balances or activity; a connection failure shows a banner and retries every 5 seconds.
 
 To verify:
 
 ```sh
 npm run build
 npx playwright install chromium
-npm test
+npm test            # the mock suite
+npm run test:live   # live specs (tests/live-*.spec.ts) against XRPL testnet; see playwright.live.config.ts
 ```
 
 ## Behavior
@@ -38,6 +44,9 @@ npm test
 Typography, colors, and layout rules live in [DESIGN_SYSTEM.md](DESIGN_SYSTEM.md), with semantic tokens in `src/tokens.css`. Agentation is development-only.
 
 ## Integration boundary
+
+In live mode (`src/api.ts`, `src/live.ts`, `src/store.ts`) every number comes from the cereal service on XRPL
+testnet and amounts are RLUSD decimal strings. The rest of this section describes mock mode.
 
 This is a local frontend demo. Wallet creation, funding, rules, and activity do not call XRPL or payment providers. No Ledger device is connected. No seeds, keys, addresses, or credentials belong in browser state. Any future backend payment integration must remain XRPL testnet only.
 

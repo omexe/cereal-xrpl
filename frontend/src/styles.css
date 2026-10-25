@@ -240,3 +240,9 @@ dialog::backdrop { background: var(--color-overlay); backdrop-filter: blur(4px);
   .transaction-list { max-height: none; overflow: visible; }
   .transaction-main h3 { font: var(--font-body); }
 }
+
+/* Live mode: connection state and finished (reclaimed, retired, rejected, failed) wallets. */
+.live-banner { font: var(--font-ui); color: var(--color-text-secondary); margin: 0 0 12px; }
+.live-banner.error { color: var(--color-error); }
+.wallet-row.finished { color: var(--color-text-muted); }
+.wallet-row.finished .wallet-dot, .home-view .wallet-row.finished .wallet-dot { background: var(--color-marker-inactive); }
