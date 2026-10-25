@@ -88,8 +88,8 @@ export default function App() {
     if (isLive) {
       try {
         const out = await api.updateMeta(selected.id, { archived: !selected.archived });
-        live.upsert(out.wallet);
-        notify(selected.archived ? 'Wallet restored.' : 'Wallet archived. Its funds and account are unchanged.'); setModal(null);
+        live.upsert(out.wallet); void live.refresh(); // re-read: a poll already in flight must not put the old record back
+        notify(selected.archived ? `Wallet restored. It is still ${out.wallet.status}.` : 'Wallet archived. Its funds and account are unchanged.'); setModal(null);
       } catch (e) { notify(describeError(e), true); }
       return;
     }
@@ -107,7 +107,7 @@ export default function App() {
     if (isLive) {
       try {
         const out = await api.updateMeta(id, { folder: folder?.name ?? null });
-        live.upsert(out.wallet);
+        live.upsert(out.wallet); void live.refresh(); // re-read: a poll already in flight must not put the old record back
         notify(`Wallet moved to ${folder?.name ?? 'Disposable Wallets'}.`);
       } catch (e) { notify(describeError(e), true); }
       return;
