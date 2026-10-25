@@ -29,7 +29,7 @@ export function FolderDialog({ app }: { app: AppActions }) {
     const name = String(new FormData(event.currentTarget).get('name')).trim();
     if (!isLive) {
       if (!name) return;
-      app.setWorkspace(previous => ({ ...previous, folders: [...previous.folders, { id: crypto.randomUUID(), name }] })); app.close();
+      const saved = await app.setWorkspace(previous => ({ ...previous, folders: [...previous.folders, { id: crypto.randomUUID(), name }] })); if (saved) app.close();
       return;
     }
     if (!name) { setError('Name the folder.'); return; }

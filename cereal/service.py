@@ -840,6 +840,9 @@ def vendor_revoke(address: str, req: VendorRevokeRequest) -> dict:
 
 # The React app's feature routers (cereal/routes/): run a task, edit rules, top up, folders and archive.
 from .routes import funding as _funding, rules as _rules, runs as _runs, workspace as _workspace  # noqa: E402
+from .routes import sessions as _sessions, site_access as _site_access, sites as _sites, sites_probe as _sites_probe  # noqa: E402
 
-for _router in (_runs.router, _rules.router, _funding.router, _workspace.router):
+# /sites/probe and /sites/{id}/... are registered before /sites so the literal paths win.
+for _router in (_runs.router, _rules.router, _funding.router, _workspace.router,
+                _sessions.router, _sites_probe.router, _site_access.router, _sites.router):
     app.include_router(_router)

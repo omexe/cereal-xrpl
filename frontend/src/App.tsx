@@ -7,6 +7,9 @@ import { ConstraintsDialog } from './components/ConstraintsDialog';
 import { FolderDialog } from './components/FolderDialog';
 import { FundsDialog } from './components/FundsDialog';
 import { NewWalletDialog } from './components/NewWalletDialog';
+import { AddSiteDialog } from './components/AddSiteDialog';
+import { SiteDetail } from './components/SiteDetail';
+import { SitesSection } from './components/SitesSection';
 import { SettingsDialog } from './components/SettingsDialog';
 import { WalletActions } from './components/WalletActions';
 import { WalletDetail } from './components/WalletDetail';
@@ -17,21 +20,26 @@ import { CORE_ID, HOME_VIEW } from './lib/walletSpheres';
 import { formatAmount } from './format';
 import { isActive } from './live';
 import { isLive } from './mode';
+import { loadSession, saveSession, type Session } from './session';
 import { useLiveData } from './store';
-import { loadWorkspace, parseConstraints, populateMockWallet, STORAGE_KEY, type Wallet, type Workspace } from './wallets';
+import { parseConstraints, populateMockWallet, type Wallet } from './wallets';
+import { useWorkspace } from './workspaceStore';
 
-type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | null;
-const emptyWorkspace: Workspace = { wallets: [], folders: [] };
+type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | 'site' | null;
 
 export default function App() {
   // Live mode never loads or seeds the mock workspace; every wallet comes from the cereal service.
-  const [mockWorkspace, setWorkspace] = useState<Workspace>(() => isLive ? emptyWorkspace : loadWorkspace());
-  const [selectedId, setSelectedId] = useState(() => mockWorkspace.wallets.find(w => !w.archived)?.id);
+  const { workspace: mockWorkspace, setWorkspace, error: storageError } = useWorkspace(!isLive);
+  const query = new URLSearchParams(window.location.search);
+  const [selectedId, setSelectedId] = useState(() => query.get('wallet') ?? mockWorkspace.wallets.find(w => !w.archived)?.id);
   const live = useLiveData(isLive, selectedId);
   const workspace = isLive ? live.workspace : mockWorkspace;
-  const [activeView, setActiveView] = useState<'home' | 'wallet'>('home');
+  const [activeView, setActiveView] = useState<'home' | 'wallet' | 'site'>(query.has('wallet') ? 'wallet' : 'home');
+  const [session, setSessionState] = useState<Session | null>(() => isLive ? loadSession() : null);
+  const [selectedSiteId, setSelectedSiteId] = useState<string>();
+  const [siteUrl, setSiteUrl] = useState<string>();
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['research-2']);
-  const [modal, setModal] = useState<Modal>(null);
+  const [modal, setModal] = useState<Modal>(query.get('setup') === 'research' || query.get('settings') === 'demo' ? 'settings' : null);
   const [mobileNav, setMobileNav] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [walletDescription, setWalletDescription] = useState('');
@@ -59,11 +67,6 @@ export default function App() {
   const editable = !!selected && !selected.archived && isActive(selected);
 
   useEffect(() => {
-    if (isLive) return;
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(mockWorkspace)); }
-    catch { setMessage('Changes are available for this session. Browser storage is unavailable.'); }
-  }, [mockWorkspace]);
-  useEffect(() => {
     if (!message || promptError || messageError) return;
     const timer = window.setTimeout(() => setMessage(''), 5000);
     return () => clearTimeout(timer);
@@ -85,6 +88,11 @@ export default function App() {
     if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
     setSelectedId(id); setActiveView('wallet'); setMobileNav(false); setPrompt(''); setPromptError(false); setWalletDescription('');
   }); }
+  function setSession(next: Session | null) { saveSession(next); setSessionState(next); }
+  function openSite(siteId: string) { navigate(() => {
+    setSelectedSiteId(siteId); setActiveView('site'); setMobileNav(false); setPrompt(''); setPromptError(false); notify('');
+  }); }
+  function openAddSite(url?: string) { setSiteUrl(url); setModal('site'); }
   function goHome() { navigate(() => {
     setSelectedId(activeWallets[0]?.id); setActiveView('home'); setMobileNav(false);
     setPrompt(''); setPromptError(false); notify('');
@@ -100,7 +108,7 @@ export default function App() {
   function editPrompt(next: string) { setPrompt(next); setPromptError(false); }
   /** Mock: the demo wallet is exactly the draft on screen, funded with its budget. Live: cereal reads the sentence and
    * the owner approves on the Ledger, in the New wallet dialog. */
-  function createFromPrompt() {
+  async function createFromPrompt() {
     if (isLive) { setWalletDescription(prompt.trim()); setModal('wallet'); return; }
     const draft = parseDraft(prompt), constraints = draftConstraints(draft);
     if (!constraints) {
@@ -108,13 +116,15 @@ export default function App() {
       return;
     }
     const id = crypto.randomUUID();
-    setWorkspace(previous => ({ ...previous, wallets: [...previous.wallets, populateMockWallet({
+    // Same contract as the New wallet dialog: open the wallet only once the workspace store has saved it.
+    const saved = await setWorkspace(previous => ({ ...previous, wallets: [...previous.wallets, populateMockWallet({
       id, name: draft.name ?? 'New wallet', description: prompt.trim(), transactions: [], balance: constraints.spend, archived: false, constraints,
     })] }));
+    if (!saved) return;
     showWallet(id); notify('Demo wallet created with mock funds and activity.');
   }
   function updateWallet(id: string, update: Partial<Wallet>) {
-    setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === id ? { ...w, ...update } : w) }));
+    return setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(w => w.id === id ? { ...w, ...update } : w) }));
   }
   function openConstraints() { if (selected) { setRulesSentence(''); setModal('constraints'); } }
   function openFunds() {
@@ -131,7 +141,7 @@ export default function App() {
       } catch (e) { notify(describeError(e), true); }
       return;
     }
-    updateWallet(selected.id, { archived: !selected.archived });
+    if (!await updateWallet(selected.id, { archived: !selected.archived })) return;
     if (!selected.archived) setSelectedId(activeWallets.find(w => w.id !== selected.id)?.id);
     notify(selected.archived ? 'Wallet restored.' : 'Wallet archived.'); setModal(null);
   }
@@ -150,7 +160,7 @@ export default function App() {
       } catch (e) { notify(describeError(e), true); }
       return;
     }
-    setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(wallet => wallet.id === id ? { ...wallet, folderId } : wallet) }));
+    if (!await setWorkspace(previous => ({ ...previous, wallets: previous.wallets.map(wallet => wallet.id === id ? { ...wallet, folderId } : wallet) }))) return;
     setPromptError(false);
     notify(`Wallet moved to ${folder?.name ?? 'Disposable Wallets'}.`);
   }
@@ -178,10 +188,10 @@ export default function App() {
       },
     };
   }
-  function applyPrompt(event: FormEvent) {
+  async function applyPrompt(event: FormEvent) {
     event.preventDefault();
     if (isHome) {
-      if (prompt.trim()) createFromPrompt();
+      if (prompt.trim()) void createFromPrompt();
       return;
     }
     if (!selected || !editable) return;
@@ -192,7 +202,8 @@ export default function App() {
       notify('Try: Spend up to $20 over 2 days, only at HubSpot, Clearbit and Apollo. Ask me above $5. Sweep back when done.');
       return;
     }
-    updateWallet(selected.id, { constraints }); setPrompt(''); setPromptError(false); notify('Demo wallet constraints updated.');
+    if (!await updateWallet(selected.id, { constraints })) return;
+    setPrompt(''); setPromptError(false); notify('Wallet constraints updated.');
   }
   function walletRow(wallet: Wallet, nested = false) {
     const finished = !isActive(wallet);
@@ -210,7 +221,8 @@ export default function App() {
 
   const app: AppActions = {
     workspace, activeWallets, selected, selectedId, setSelectedId, isHome, live, setWorkspace, updateWallet, showWallet,
-    moveWallet, toggleArchive, notify, close: () => { setModal(null); setWalletDescription(''); setRulesSentence(''); },
+    moveWallet, toggleArchive, notify, close: () => { setModal(null); setWalletDescription(''); setRulesSentence(''); setSiteUrl(undefined); },
+    session, setSession, selectedSiteId, openSite, openAddSite,
   };
   const liveBanner = isLive && (live.status === 'error'
     ? <p className="live-banner error" role="alert">{live.error ?? 'The cereal service is not reachable.'} Retrying every 5 seconds.</p>
@@ -225,6 +237,7 @@ export default function App() {
         <button aria-current={activeNavigation === 'home' ? 'page' : undefined} onClick={goHome}><Home03 /><span>Home</span></button>
         <button aria-current={activeNavigation === 'settings' ? 'true' : undefined} onClick={() => setModal('settings')}><Settings01 /><span>Settings</span></button>
       </nav>
+      {(workspace.demoPayments ?? []).some(payment => payment.status === 'pending') && <button className="approval-nav" onClick={() => { const payment = workspace.demoPayments?.find(item => item.status === 'pending'); if (payment) selectWallet(payment.walletId); }}>Approval needed <span>{workspace.demoPayments?.filter(item => item.status === 'pending').length}</span></button>}
       <section className="sidebar-section">
         <div className="section-heading muted"><span>Folders</span><button className="icon-button small" aria-label="New folder" onClick={() => setModal('folder')}><Plus /></button></div>
         {workspace.folders.map(folder => {
@@ -242,6 +255,7 @@ export default function App() {
         {isHome && activeWallets.length > homeShown && <button className="wallet-more" onClick={() => setShowAllWallets(!showAllWallets)}>{showAllWallets ? 'Show fewer' : `+ ${activeWallets.length - homeShown} more`}</button>}
         {!activeWallets.length && (!isLive || live.status === 'ready') && <button className="empty-wallets" onClick={() => setModal('wallet')}>Create your first wallet</button>}
       </section>
+      {isLive && <SitesSection app={app} />}
       <section className="sidebar-section"><h2 className="section-heading muted">Archived Wallets</h2>
         {workspace.wallets.filter(w => w.archived).map(w => walletRow(w))}
       </section>
@@ -250,7 +264,8 @@ export default function App() {
     <main>
       <div className="workspace-content">
       {liveBanner}
-      {forming ? <section className="home-stage" aria-label="Wallet home">
+      {activeView === 'site' && selectedSiteId ? <SiteDetail app={app} siteId={selectedSiteId} />
+      : forming ? <section className="home-stage" aria-label="Wallet home">
         <FormingWallet text={prompt} wallets={activeWallets} totalBalance={total} caption={isLive ? 'New wallet, funded from your main wallet' : 'New demo wallet, funded with demo money'}
           canCreate={!isLive || live.status === 'ready'} onCreate={createFromPrompt} onCancel={() => editPrompt('')} onSelect={selectWallet} />
       </section> : isHome ? <section className="home-stage" aria-label="Wallet home">
@@ -266,6 +281,7 @@ export default function App() {
         <div className="home-illustration organism-frame">
           <WalletOrganism wallets={activeWallets} totalBalance={total} selectedId={CORE_ID} onSelect={selectWallet} onHome={goHome} framed={HOME_VIEW} /></div>
       </section> : selected ? <WalletDetail wallet={selected} onAddFunds={openFunds} onEditConstraints={openConstraints} onRestore={toggleArchive}
+          payments={(workspace.demoPayments ?? []).filter(payment => payment.walletId === selected.id)}
           vendors={live.vendors} map={{ wallets: activeWallets, totalBalance: total, onSelect: selectWallet, onHome: goHome }}
           actions={<WalletActions app={app} wallet={selected} />} />
         : <div className="empty-details"><h1>Create a wallet<br />for your next task.</h1><button className="primary-button" onClick={() => setModal('wallet')}>Create a wallet</button></div>}
@@ -273,7 +289,7 @@ export default function App() {
 
       </div>
       <footer className="composer">
-      <p id="status-message" role={promptError || messageError ? 'alert' : 'status'} className={`status-message ${promptError || messageError ? 'error' : ''}`}>{message}</p>
+      <p id="status-message" role={promptError || messageError || storageError ? 'alert' : 'status'} className={`status-message ${promptError || messageError || storageError ? 'error' : ''}`}>{storageError || message}</p>
       <form className="prompt-form" onSubmit={applyPrompt}>
         <input aria-label={isHome ? 'Describe a new wallet in plain English' : 'Edit wallet spending rules'} aria-invalid={promptError} aria-describedby={promptError ? 'status-message' : undefined}
           placeholder={isHome ? 'Describe a new wallet in plain English' : selected?.archived ? 'Restore this wallet to edit its rules' : selected && !editable ? 'This wallet is finished; its rules no longer change' : selected ? 'Edit wallet constraints in plain English' : 'Create a wallet to set spending rules'} value={prompt} disabled={!isHome && !editable}
@@ -288,5 +304,6 @@ export default function App() {
     {modal === 'funds' && selected && <FundsDialog app={app} />}
     {modal === 'constraints' && selected && <ConstraintsDialog app={app} sentence={rulesSentence || undefined} />}
     {modal === 'settings' && <SettingsDialog app={app} />}
+    {modal === 'site' && <AddSiteDialog app={app} url={siteUrl} />}
   </div>;
 }

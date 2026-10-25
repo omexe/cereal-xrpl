@@ -1,4 +1,5 @@
 import type { LiveInfo } from './live';
+import type { DemoPayment, ResearchRun } from './researchDemo';
 
 export interface Constraints {
   spend: number;
@@ -31,6 +32,9 @@ export interface Wallet {
   live?: LiveInfo;
   name: string;
   description?: string;
+  createdAt?: string;
+  demoClosedAt?: string;
+  demoReturnedBalance?: number;
   mockDataVersion?: number;
   transactions?: DemoTransaction[];
   balance: number;
@@ -40,7 +44,7 @@ export interface Wallet {
 }
 
 export interface Folder { id: string; name: string }
-export interface Workspace { wallets: Wallet[]; folders: Folder[] }
+export interface Workspace { wallets: Wallet[]; folders: Folder[]; demoPayments?: DemoPayment[]; researchRuns?: ResearchRun[] }
 export const STORAGE_KEY = 'cereal-demo-v1';
 export const defaultConstraints: Constraints = {
   spend: 20, days: 2, merchants: ['HubSpot', 'Clearbit', 'Apollo'], approval: 5, sweep: true,
@@ -73,6 +77,8 @@ const mockProfiles = [
 
 /** Deterministic local fixtures: repeat loads never generate new activity or money. */
 export function populateMockWallet(wallet: Wallet, profileIndex?: number): Wallet {
+  // Legacy wallets had no creation timestamp. Start their duration once, at migration.
+  wallet = { ...wallet, createdAt: wallet.createdAt ?? new Date().toISOString() };
   if (wallet.mockDataVersion === 1) return wallet;
   const matched = mockProfiles.findIndex(profile => profile.match.test(wallet.name));
   const hash = Array.from(wallet.id).reduce((sum, character) => sum + character.charCodeAt(0), 0);
@@ -130,6 +136,7 @@ export function loadWorkspace(): Workspace {
           name: folder.name === 'Market Research' ? folderNames[folder.id] ?? folder.name : folder.name,
         })),
         wallets: state.wallets.map(wallet => {
+          delete (wallet as Wallet & { demoPurpose?: string }).demoPurpose;
           const index = walletNames.findIndex((_, i) => wallet.id === `wallet-${i + 1}`);
           const transactions = wallet.transactions === undefined
             ? (wallet.id === 'wallet-1' ? sampleTransactions.map(transaction => ({ ...transaction })) : [])

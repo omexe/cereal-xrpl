@@ -1,5 +1,6 @@
 import type { AppActions } from '../appActions';
 import { isLive } from '../mode';
+import { DemoSettings } from './DemoSettings';
 import { Dialog } from './Dialog';
 import { WalletSettings } from './WalletSettings';
 import { ConnectionPanel } from './settings/ConnectionPanel';
@@ -29,5 +30,6 @@ export function SettingsDialog({ app }: { app: AppActions }) {
     <div className="settings-summary"><span>Mode</span><strong>Local demo</strong><span>Active wallets</span><strong>{app.activeWallets.length}</strong><span>Archived wallets</span><strong>{archived}</strong></div>
     <p className="dialog-description">Wallets, balances, and constraints are simulated and saved in this browser. No wallet service or Ledger device is connected.</p>
     <WalletSettings app={app} />
+    <DemoSettings wallets={app.workspace.wallets} runs={app.workspace.researchRuns ?? []} selectedId={app.selectedId} />
   </Dialog>;
 }

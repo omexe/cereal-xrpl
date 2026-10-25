@@ -21,12 +21,12 @@ export function ConstraintsDialog({ app, sentence }: { app: AppActions; sentence
 function MockConstraints({ app }: { app: AppActions }) {
   const selected = app.selected!;
   const [draftConstraints, setDraftConstraints] = useState<Constraints>(() => ({ ...selected.constraints }));
-  return <Dialog title="Wallet constraints" onClose={app.close}><form onSubmit={event => {
+  return <Dialog title="Wallet constraints" onClose={app.close}><form onSubmit={async event => {
     event.preventDefault(); if (selected.archived) return;
     const data = new FormData(event.currentTarget);
     const merchants = String(data.get('merchants')).split(',').map(m => m.trim()).filter(Boolean);
     if (!merchants.length) return;
-    app.updateWallet(selected.id, { constraints: { ...draftConstraints, merchants } }); app.close(); app.notify('Demo wallet constraints updated.');
+    if (!await app.updateWallet(selected.id, { constraints: { ...draftConstraints, merchants } })) return; app.close(); app.notify('Demo wallet constraints updated.');
   }}><p className="dialog-description">Set spending rules for {selected.name}. Rules are saved for this demo; no payments are executed.</p>
     <div className="form-grid"><label>Spend limit ($)<input type="number" min="0.01" step="0.01" required value={draftConstraints.spend} onChange={e => setDraftConstraints({ ...draftConstraints, spend: +e.target.value })} autoFocus /></label>
     <label>Duration (days)<input type="number" min="1" max="365" step="1" required value={draftConstraints.days} onChange={e => setDraftConstraints({ ...draftConstraints, days: +e.target.value })} /></label></div>

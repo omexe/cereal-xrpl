@@ -1,4 +1,4 @@
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { ChevronRight } from '@untitledui/icons';
 import {
   activityItems, activitySummary, durationLabel, isExpired, lifecycleProofs, nameLookup, planSkipped, segmentWidth,
@@ -7,6 +7,8 @@ import {
 import type { Vendor } from '../api';
 import { explorerAccount, formatAmount, shortAddress } from '../format';
 import { ACTIVE_STATUSES } from '../live';
+import type { DemoPayment } from '../researchDemo';
+import { PaymentRequest, paymentLabel } from './PaymentRequest';
 import type { Wallet } from '../wallets';
 import { VIEW } from '../lib/walletSpheres';
 import { WalletOrganism } from './WalletOrganism';
@@ -17,6 +19,7 @@ const date = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', 
 
 interface Props {
   wallet: Wallet;
+  payments?: DemoPayment[];
   onAddFunds: () => void;
   onEditConstraints: () => void;
   onRestore: () => void;
@@ -34,8 +37,7 @@ export function WalletDetail(props: Props) {
   return props.wallet.live ? <LiveWalletDetail {...props} /> : <MockWalletDetail {...props} />;
 }
 
-/** The original browser-only demo (VITE_CEREAL_MODE=mock), unchanged. */
-function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, actions, map }: Props) {
+function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, payments = [], map }: Props) {
   const transactions = [...(wallet.transactions ?? [])].sort((a, b) => Date.parse(b.timestamp) - Date.parse(a.timestamp));
   const merchants = [...new Set(transactions.map(transaction => transaction.merchant))];
   const groups = merchants.map((merchant, index) => ({
@@ -44,45 +46,54 @@ function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, ac
   }));
   const spent = groups.reduce((sum, group) => sum + group.amount, 0);
   const scale = Math.max(spent, wallet.constraints.spend);
+  const activity = [
+    ...transactions.map(transaction => ({ id: transaction.id, at: transaction.timestamp, transaction, payment: payments.find(payment => payment.id === transaction.id) })),
+    ...payments.filter(payment => payment.status !== 'paid').map(payment => ({ id: payment.id, at: payment.createdAt, transaction: undefined, payment })),
+  ].sort((a, b) => Number(b.payment?.status === 'pending') - Number(a.payment?.status === 'pending') || Date.parse(b.at) - Date.parse(a.at));
   return <article className="wallet-detail" aria-label={`${wallet.name} wallet details`}>
-    <section className="budget" aria-label="Demo spending breakdown">
+    <section className="budget" aria-label="Spending breakdown">
       <div className="budget-label">
         <h1>{wallet.name}</h1>
-        <div className="budget-actions"><span className="budget-used" title="Demo spending / spending limit">{`${money(spent)} / ${money(wallet.constraints.spend)}`}</span>
-          <button className="primary-button" disabled={wallet.archived} onClick={onAddFunds}>Add funds</button>
+        <div className="budget-actions"><span className="budget-used" title="Spending / spending limit">{money(spent)} / {money(wallet.constraints.spend)}</span>
+          <button className="primary-button" disabled={wallet.archived || !!wallet.demoClosedAt} onClick={onAddFunds}>Add funds</button>
         </div>
       </div>
-      <div className="budget-track" role="img" aria-label={`${money(spent)} in demo spending out of a ${money(wallet.constraints.spend)} limit`}>
+      <div className="budget-track" role="img" aria-label={`${money(spent)} spent out of a ${money(wallet.constraints.spend)} limit`}>
         {groups.map(group => <span key={group.merchant} className="budget-segment" style={{ width: `${group.amount / scale * 100}%`, background: group.color }} />)}
       </div>
       <div className="budget-legend">{groups.map(group => <span key={group.merchant}><i style={{ background: group.color }} />{group.merchant}</span>)}
-        {!groups.length && <span>No demo spending yet</span>}
+        {!groups.length && <span>No spending yet</span>}
         {spent > wallet.constraints.spend && <span className="budget-over-limit">Over spending limit</span>}
       </div>
     </section>
     <section className="wallet-policy" aria-label="Spending rules">
       {wallet.archived && <h2>Archived wallet</h2>}
       <p className="constraints">
-        Spend up to <button disabled={wallet.archived} onClick={onEditConstraints}>{`$${wallet.constraints.spend}`}</button> over <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.days} {wallet.constraints.days === 1 ? 'day' : 'days'}</button>, only at{' '}
+        Spend up to <button disabled={wallet.archived} onClick={onEditConstraints}>${wallet.constraints.spend}</button> over <button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.days} {wallet.constraints.days === 1 ? 'day' : 'days'}</button>, only at{' '}
         {wallet.constraints.merchants.map((merchant, index, list) => <span key={`${merchant}-${index}`}>
           <button disabled={wallet.archived} onClick={onEditConstraints}>{merchant}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : '. '}
         </span>)}
         {/* An approval threshold at or above the limit can never trigger, so it is not a rule worth stating. */}
-        {wallet.constraints.approval < wallet.constraints.spend && <>Ask me <button disabled={wallet.archived} onClick={onEditConstraints}>above {`$${wallet.constraints.approval}`}</button>. </>}<button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
+        {wallet.constraints.approval < wallet.constraints.spend && <>Ask me <button disabled={wallet.archived} onClick={onEditConstraints}>above ${wallet.constraints.approval}</button>. </>}<button disabled={wallet.archived} onClick={onEditConstraints}>{wallet.constraints.sweep ? 'Sweep back' : 'Keep funds'}</button> when done.
       </p>
+      {wallet.demoClosedAt && <p className="demo-note">${(wallet.demoReturnedBalance ?? 0).toFixed(2)} returned to the demo treasury. Wallet closed after research.</p>}
       {wallet.archived && <button className="text-button restore" onClick={onRestore}>Restore wallet</button>}
-      {actions}
     </section>
-    <Activity walletId={wallet.id} map={map} summary="Demo activity">
-      <div className="transaction-list" tabIndex={transactions.length ? 0 : undefined} role="region" aria-label="Demo transactions">
-        {transactions.map(transaction => <article className="transaction-card" key={transaction.id}>
-          <div className="transaction-main"><h3>{transaction.title}</h3>
-            <span className="transaction-merchant" style={{ '--merchant-color': groups.find(group => group.merchant === transaction.merchant)?.color } as CSSProperties}><i />{transaction.merchant}</span>
-            <span className="transaction-amount">{money(transaction.amount)}</span>
-          </div>
-          <div className="transaction-meta"><span>{transaction.durationSeconds}s</span><time dateTime={transaction.timestamp} title={`${date.format(new Date(transaction.timestamp))}, ${time.format(new Date(transaction.timestamp))} ET`}>{date.format(new Date(transaction.timestamp))} · {time.format(new Date(transaction.timestamp))} ET</time></div>
-        </article>)}
-        {!transactions.length && <p className="transaction-empty">No transactions for this wallet yet.</p>}
+    <Activity walletId={wallet.id} map={map} summary="Activity" attention={payments.some(payment => payment.status === 'pending')}>
+      <div className="transaction-list" tabIndex={transactions.length || payments.length ? 0 : undefined} role="region" aria-label="Transactions">
+        {activity.map(entry => {
+          if (!entry.transaction) return <PaymentRequest key={entry.id} payment={entry.payment!} />;
+          const transaction = entry.transaction;
+          return <article className="transaction-card" key={entry.id}>
+            <div className="transaction-main"><h3>{transaction.title}</h3>
+              <span className="transaction-merchant" style={{ '--merchant-color': groups.find(group => group.merchant === transaction.merchant)?.color } as CSSProperties}><i />{transaction.merchant}</span>
+              <span className="transaction-amount">{money(transaction.amount)}</span>
+            </div>
+            <div className="transaction-meta"><span>{transaction.durationSeconds}s</span><time dateTime={transaction.timestamp} title={`${date.format(new Date(transaction.timestamp))}, ${time.format(new Date(transaction.timestamp))} ET`}>{date.format(new Date(transaction.timestamp))} · {time.format(new Date(transaction.timestamp))} ET</time></div>
+            {entry.payment && <p className="payment-reason"><span className="payment-badge paid">{paymentLabel(entry.payment)}</span></p>}
+          </article>;
+        })}
+        {!transactions.length && !payments.length && <p className="transaction-empty">No transactions for this wallet yet.</p>}
       </div>
     </Activity>
   </article>;
@@ -90,9 +101,12 @@ function MockWalletDetail({ wallet, onAddFunds, onEditConstraints, onRestore, ac
 
 /** Transactions sit left of the illustration, collapsed to their header; opening the list pushes the illustration right.
  * It stays mounted across wallets so the graphic can animate between them; the list closes for each new wallet. */
-function Activity({ walletId, map, summary, children }: { walletId: string; map: MapProps; summary: string; children: ReactNode }) {
+function Activity({ walletId, map, summary, attention = false, children }: { walletId: string; map: MapProps; summary: string;
+  /** Something in the list needs the owner (a payment waiting for approval): open it, so the request is never hidden. */
+  attention?: boolean; children: ReactNode }) {
   const [openFor, setOpenFor] = useState<string>();
   const open = openFor === walletId;
+  useEffect(() => { if (attention) setOpenFor(walletId); }, [attention, walletId]);
   const setOpen = (next: boolean) => setOpenFor(next ? walletId : undefined);
   return <div className="wallet-activity" data-open={open}>
     <section className="transactions" aria-labelledby="transactions-heading">

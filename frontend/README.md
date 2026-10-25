@@ -24,12 +24,20 @@ npm test            # the mock suite
 npm run test:live   # live specs (tests/live-*.spec.ts) against XRPL testnet; see playwright.live.config.ts
 ```
 
-## Behavior
+## Research chat tool
+
+Start with `npm run dev:mock`, then open **Settings → Developer tools → Open demo chat** to launch the separate ChatGPT-style tool at `/demo-chat`. Name an existing wallet in the prompt, for example: “Research XRPL. Use my Apollo Research wallet for payments.” No special wallet or creation flow is required.
+
+Cereal applies that wallet’s current rules. Requests, approvals, blocked attempts, and payments appear in its normal transaction list alongside its existing history. Chat asks which wallet to use if the name is missing, unknown, or ambiguous. Launch and replay controls stay in Settings; reset reverses only this tool’s simulated activity and preserves prior history, funding, rules, and other wallets.
+
+Both windows must use the same browser profile and origin. No live browsing, model calls, provider calls, or real payments occur. See [the walkthrough](../docs/RESEARCH-CHAT-DEMO.md) for presentation steps, source prices, persistence behavior, and the integration boundary.
+
+## Mock-mode behavior
 
 - Home displays the total active demo balance and the original home illustration. Its composer opens wallet creation with the entered task description.
 - Select a wallet in the sidebar to open its activity view: merchant spending bar, editable spending rules, and transaction history beside the original wallet illustration.
 - The spending bar and its legend are calculated from that wallet's demo transactions. The header shows spending against the configured spending limit. Lowering the limit below existing spending displays an over-limit message; the chart remains contained.
-- Every initial wallet, including archived wallets, has a task-specific description, mock balance, spending rules, and five or six sample transactions dated October 24, 2026. New wallets receive matching mock data based on their task name. Existing browser wallets are backfilled once: empty activity, missing descriptions, and zero balances receive fixtures; custom rules, nonzero balances, names, folder placement, and existing activity are preserved. A per-wallet marker prevents reseeding after subsequent edits. All activity is explicitly marked as a demo.
+- Every initial wallet, including archived wallets, has a task-specific description, mock balance, spending rules, and five or six sample transactions dated October 24, 2026. New wallets receive matching mock data based on their task name. All wallets use the same layout and can be named in the research prompt. Existing browser wallets are backfilled once: empty activity, missing descriptions, and zero balances receive fixtures; custom rules, nonzero balances, names, folder placement, and existing activity are preserved. A per-wallet marker prevents reseeding after subsequent edits. Simulation mode is explained in Settings; the wallet list is labelled Activity.
 - Add funds changes the selected wallet's available demo balance, shown in the funding dialog. It does not create spending transactions. Home funding lets you select the receiving wallet.
 - New Wallet creates a named demo wallet with an optional description and folder. Settings can archive, restore, or move the selected wallet. Dragging also moves wallets between folders and Disposable Wallets.
 - Archived wallets retain their activity and can be restored; funding and policy edits are disabled while archived.
