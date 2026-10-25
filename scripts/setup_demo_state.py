@@ -97,8 +97,11 @@ def main() -> None:
         if config.LEDGER_ADDRESS in current:
             print("   already a signer")
         else:
+            # Add, never replace: teammates' machines register their own Ledger emulators on the shared treasury,
+            # and any one of them approving is enough (quorum 1). Replacing the list broke the others (2026-10-24).
+            signers = sorted(set(current) | {config.LEDGER_ADDRESS})
             tx = SignerListSet(account=treasury, signer_quorum=1,
-                               signer_entries=[SignerEntry(account=config.LEDGER_ADDRESS, signer_weight=1)])
+                               signer_entries=[SignerEntry(account=a, signer_weight=1) for a in signers])
             r = sign_submit(stamp(tx, []), config.wallet("TREASURY"), c)
             print(f"   SignerListSet {r['result']} {r.get('hash')}")
 

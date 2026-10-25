@@ -1,5 +1,5 @@
 PY=.venv/bin/python
-.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 shop vendor-test rails vendor-b vendor-c vendor-d vendor-e vendor-f ap4m-merchant retire export ledger-check
+.PHONY: setup pool preflight service cosign vendor test acceptance demo main-agent beats device x402 shop vendor-test rails vendor-b vendor-c vendor-d vendor-e vendor-f refill ap4m-merchant retire export ledger-check
 setup:        ## venv + deps
 	python3 -m venv .venv && .venv/bin/pip install -q -r requirements.txt
 pool:         ## create/load roles → .env (run early: burners must age 256 ledgers)
@@ -52,3 +52,6 @@ vendor-e:     ## Sites: Vendor E on :8005, takes the payment and never delivers 
 	X402_VENDOR="Vendor E" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_E"))') X402_ITEMS="report:0.10" X402_PREFIX=research X402_DELIVERY=fail X402_PORT=8005 $(PY) x402/server.py
 vendor-f:     ## Sites: Vendor F on :8006, pays Vendor E but its xrp-ledger.toml lists Vendor D (payment redirected: blocked)
 	X402_VENDOR="Vendor F" XRPL_PAY_TO=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_E"))') X402_TOML_ADDRESS=$$($(PY) -c 'from cereal import config; print(config.address("VENDOR_D"))') X402_ITEMS="report:0.10" X402_PREFIX=research X402_PORT=8006 $(PY) x402/server.py
+
+refill:       ## demo plumbing (testnet): move our own vendors' RLUSD earnings back to the main wallet
+	$(PY) scripts/refill_treasury.py
