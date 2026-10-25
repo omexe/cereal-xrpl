@@ -6,13 +6,22 @@ The card says exactly what cereal and the ledger will enforce: budget, how long 
 the amount above which the owner's Ledger must approve a payment, and whether leftovers go home when it is done.
 Claude parses when a key is set; otherwise a deterministic parser handles this sentence shape. Either way every
 vendor is resolved against cereal's directory and checked on-ledger, and the card is re-checked when it is used.
+
+R07: every card carries a `digest` of what it enforces. POST /wallets rebuilds the card and, given the digest the owner
+reviewed, refuses `card_changed` when the rebuilt card differs (a vendor revoked since, a cap changed, or, when this
+service no longer holds the reviewed reading of the sentence, a different parser reading).
+R03: POST /wallets takes a client `request_id`; the guard at the end of this file makes a retry return the original.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import re
+import threading
+from collections import OrderedDict
 from decimal import Decimal, InvalidOperation
 
-from . import config, directory
+from . import config, deployments, directory
 
 AMOUNT = r"\$?\s*(\d+(?:\.\d+)?)\s*(?:rlusd|usd|dollars?)?"
 
@@ -84,16 +93,22 @@ def parse_with_claude(sentence: str, known_names: list[str]) -> dict | None:
     return {**out, "vendor_names": out.get("vendor_names") or [], "parsed_by": llm.served_by}
 
 
-def build_card(sentence: str, known: list[dict] | None = None) -> dict:
-    """Parse, resolve every vendor against the directory and the ledger, apply defaults, and list what's wrong."""
+def build_card(sentence: str, known: list[dict] | None = None, reviewed: str | None = None) -> dict:
+    """Parse, resolve every vendor against the directory and the ledger, apply defaults, and list what's wrong.
+
+    `reviewed`: the digest of a card this service built and showed for this sentence. Its reading of the sentence is
+    reused instead of asking the model again (a model may read the same sentence differently twice), while every
+    vendor credential, cap and default is checked again now. Unknown digest (another process, a restart): full rebuild."""
     from . import llm
     known = known if known is not None else directory.list_vendors()
-    raw = (parse_with_claude(sentence, [v["name"] for v in known]) if llm.available() else None)
-    problems, notes, allowed, vendors_out = [], [], [], []
+    raw = _reading(reviewed, sentence) if reviewed else None
     if raw is None:
-        if llm.available():
-            notes.append(f"Claude couldn't read this ({llm.last_error}); read by the backup parser instead")
-        raw = parse_fallback(sentence)
+        raw = parse_with_claude(sentence, [v["name"] for v in known]) if llm.available() else None
+        if raw is None:
+            fell_back = [f"Claude couldn't read this ({llm.last_error}); read by the backup parser instead"] \
+                if llm.available() else []
+            raw = {**parse_fallback(sentence), "parse_notes": fell_back}
+    problems, notes, allowed, vendors_out = [], list(raw.get("parse_notes") or []), [], []
     for n in raw.get("vendor_names") or []:
         addr = directory.resolve(n, known)
         v = next((x for x in known if x["address"] == addr), None)
@@ -133,7 +148,55 @@ def build_card(sentence: str, known: list[dict] | None = None) -> dict:
             "parsed_by": raw.get("parsed_by"), "problems": problems, "notes": notes}
     card["ok"] = not problems
     card["summary"] = summary(card)
+    card["digest"] = card_digest(card)
+    _remember(card["digest"], sentence, raw)
     return card
+
+
+# The readings behind cards this service has shown, by (digest, sentence): POST /wallets with that digest deploys the
+# reading the owner reviewed, never a fresh model reading of the same words. Bounded; lost on restart (then rebuilt).
+_readings: OrderedDict[tuple[str, str], dict] = OrderedDict()
+_readings_lock = threading.Lock()
+READINGS_KEPT = 256
+
+
+def _remember(digest: str, sentence: str, raw: dict) -> None:
+    with _readings_lock:
+        _readings[(digest, sentence)] = dict(raw)
+        _readings.move_to_end((digest, sentence))
+        while len(_readings) > READINGS_KEPT:
+            _readings.popitem(last=False)
+
+
+def _reading(digest: str, sentence: str) -> dict | None:
+    with _readings_lock:
+        raw = _readings.get((digest, sentence))
+        return dict(raw) if raw is not None else None
+
+
+def _canon_amount(value) -> str | None:
+    """"0.50", "0.5" and 0.5 are one amount: the digest must not change with how a parser wrote it."""
+    if value in (None, ""):
+        return None
+    try:
+        return format(Decimal(str(value)).normalize(), "f")
+    except InvalidOperation:
+        return str(value)
+
+
+def card_digest(card: dict) -> str:
+    """sha256 over canonical JSON of exactly what cereal and the ledger will enforce for this card: the name, budget,
+    lifetime, payee allowlist, approval threshold, sweep, and each vendor's address and on-ledger credential status.
+    Order never matters (allowlist and vendors are sorted); the wording, notes and which parser read it are not in it."""
+    vendors = sorted(({"address": v.get("address"), "credential": v.get("credential")} for v in card.get("vendors") or []),
+                     key=lambda v: (v["address"] or "", v["credential"] or ""))
+    enforced = {"name": card.get("name"), "budget": _canon_amount(card.get("budget")),
+                "expires_in_hours": float(card.get("expires_in_hours") or 0),
+                "allowed_payees": sorted(card.get("allowed_payees") or []),
+                "approval_threshold": _canon_amount(card.get("approval_threshold")),
+                "sweep_when_done": bool(card.get("sweep_when_done")), "vendors": vendors}
+    blob = json.dumps(enforced, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(blob.encode()).hexdigest()
 
 
 def summary(card: dict) -> str:
@@ -146,3 +209,16 @@ def summary(card: dict) -> str:
     ask = f" Your Ledger approves any payment above {card['approval_threshold']} RLUSD." if card["approval_threshold"] else ""
     sweep = " Leftovers return to the main wallet when it is done." if card["sweep_when_done"] else ""
     return f"Spend up to {card['budget']} RLUSD over {span}, {where}.{ask}{sweep}"
+
+
+# ---- R03: one wallet per client request_id (POST /wallets) ----
+# In-process, like the rest of the service's state: one cereal service owns its deployments file. The request_id is
+# stored on the record once deploy() has returned; until then it sits in `in_progress`, so a concurrent twin is refused
+# `in_progress` instead of starting a second deploy. It leaves `in_progress` only after the record carries it.
+requests_lock = threading.Lock()
+in_progress: set[str] = set()
+
+
+def find_request(request_id: str) -> dict | None:
+    """The record an earlier POST /wallets with this request_id left: its wallet, or the refusal that made a record."""
+    return next((r for r in deployments.all_() if r.get("request_id") == request_id), None)

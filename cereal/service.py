@@ -63,6 +63,8 @@ class WalletRequest(BaseModel):
     folder: str | None = None
     speculos_decision: str | None = None          # Speculos demos only: the owner's button for the budget
     speculos_payment_decision: str | None = None  # ... and for payments above the threshold
+    card_digest: str | None = None  # R07: the digest of the card the owner reviewed; a rebuilt card that differs is refused
+    request_id: str | None = None   # R03: a client-generated id; repeating it returns the original outcome, never a 2nd wallet
 
 
 class VendorIssueRequest(BaseModel):
@@ -208,7 +210,8 @@ def deploy(req: DeployRequest) -> dict:
 
 @app.post("/wallets/preview")
 def wallet_preview(req: WalletRequest) -> dict:
-    """Part 5: a plain-English sentence → the limits card the owner confirms. Reads only; signs and sends nothing."""
+    """Part 5: a plain-English sentence → the limits card the owner confirms, with the `digest` of what it enforces
+    (R07: pass it back as `card_digest` when creating). Reads only; signs and sends nothing."""
     from . import wallet_card
     return wallet_card.build_card(req.sentence)
 
@@ -216,18 +219,68 @@ def wallet_preview(req: WalletRequest) -> dict:
 @app.post("/wallets")
 def wallet_create(req: WalletRequest) -> dict:
     """Create a disposable wallet from a sentence. The card is rebuilt here from the sentence (a client's copy of the
-    card is never trusted), refused if it has problems, then deployed with the owner's Ledger approval as usual."""
+    card is never trusted), refused if it has problems, then deployed with the owner's Ledger approval as usual.
+
+    R07: with `card_digest`, the reviewed reading of the sentence is reused and everything else is checked again; a card
+    that now differs from the one the owner reviewed is refused `card_changed`, with the new card to review, and nothing
+    is sent. Without it the card is rebuilt from scratch and used (the chat flow, the CLI).
+    R03: with `request_id`, a repeat returns the first outcome (same wallet id, `replayed: true`, its current status),
+    including a refusal that left a record (owner_rejected); a concurrent twin is refused `in_progress`. A deploy that
+    raised after its record existed is kept as `deploy_interrupted` on that record, so a retry never deploys again."""
     from . import wallet_card
-    card = wallet_card.build_card(req.sentence)
-    if not card["ok"]:
-        return _refuse("card_problems", problems=card["problems"], card=card)
-    out = deploy(DeployRequest(task=card["name"], budget=card["budget"], allowed_payees=card["allowed_payees"],
-                               expires_in_hours=card["expires_in_hours"], approval_threshold=card["approval_threshold"],
-                               sweep_when_done=card["sweep_when_done"], name=card["name"], sentence=req.sentence,
-                               folder=req.folder,
-                               speculos_decision=req.speculos_decision,
-                               speculos_payment_decision=req.speculos_payment_decision))
-    return {**out, "card": card}
+    rid = req.request_id
+    if rid:
+        with wallet_card.requests_lock:
+            prior = wallet_card.find_request(rid)
+            if prior is None:
+                if rid in wallet_card.in_progress:
+                    return _refuse("in_progress", request_id=rid, hint="this wallet is being created; nothing new was sent")
+                wallet_card.in_progress.add(rid)
+        if prior is not None:
+            same = prior.get("sentence") == req.sentence and (prior.get("folder") or None) == (req.folder or None) \
+                and (not req.card_digest or req.card_digest == prior.get("card_digest"))
+            if not same:
+                return _refuse("request_id_reused", request_id=rid, deployment=prior["id"], sent_transactions=0)
+            if prior.get("create_refusal"):
+                return {**prior["create_refusal"], "card": prior.get("card"), "replayed": True}
+            return {"ok": True, **_with_balance(prior), "replayed": True}
+    try:
+        card = wallet_card.build_card(req.sentence, reviewed=req.card_digest) if req.card_digest \
+            else wallet_card.build_card(req.sentence)
+        if req.card_digest and card.get("digest") != req.card_digest:
+            return _refuse("card_changed", card=card, reviewed_digest=req.card_digest, sent_transactions=0)
+        if not card["ok"]:
+            return _refuse("card_problems", problems=card["problems"], card=card)
+        before = {r["id"] for r in deployments.all_()}
+        try:
+            out = deploy(DeployRequest(task=card["name"], budget=card["budget"], allowed_payees=card["allowed_payees"],
+                                       expires_in_hours=card["expires_in_hours"],
+                                       approval_threshold=card["approval_threshold"],
+                                       sweep_when_done=card["sweep_when_done"], name=card["name"], sentence=req.sentence,
+                                       folder=req.folder,
+                                       speculos_decision=req.speculos_decision,
+                                       speculos_payment_decision=req.speculos_payment_decision))
+        except Exception as e:
+            made = [r for r in deployments.all_() if r["id"] not in before and r.get("sentence") == req.sentence
+                    and not r.get("request_id")]
+            if not made:
+                raise  # nothing was recorded, so nothing can have been sent: a retry starts afresh
+            # Stopped partway: how far it got is on the record (hashes, status). Never retried, never claimed settled.
+            out = _refuse("deploy_interrupted", deployment=made[-1]["id"], status=made[-1]["status"],
+                          error=f"{type(e).__name__}: {e}"[:300],
+                          hint="check the record's hashes on the explorer before creating another wallet")
+        dep_id = out.get("id") if out.get("ok") else out.get("deployment")
+        if not dep_id:  # refused before any record existed (caps, balance, device): a retry is evaluated afresh
+            return {**out, "card": card}
+        # The card the owner confirmed, and the request that made this record (successes and refusals alike).
+        kept = {"card": card, "card_digest": card.get("digest"), **({"request_id": rid} if rid else {}),
+                **({} if out.get("ok") else {"create_refusal": out})}
+        deployments.update(dep_id, **kept)
+        return {**out, **{k: v for k, v in kept.items() if k != "create_refusal"}}
+    finally:
+        if rid:
+            with wallet_card.requests_lock:
+                wallet_card.in_progress.discard(rid)
 
 
 @app.get("/subagents")
