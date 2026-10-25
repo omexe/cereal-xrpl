@@ -329,3 +329,35 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
 .wallet-card-actions .secondary-button { width: auto; margin: 0; padding: 11px 16px; font: var(--font-control); }
 .wallet-card-actions .secondary-button:disabled { opacity: .4; }
 .wallet-card-actions .primary-button { flex: 1; padding: 11px 16px; }
+
+/* unit 1 */
+/* Live wallet detail and activity (I04/V04): status, distinct figures, settled-only bar, payment and refusal cards, proof. */
+.wallet-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+.wallet-status { font: var(--font-label); color: var(--color-text-secondary); display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--color-border); border-radius: 999px; white-space: nowrap; }
+.wallet-status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--color-marker-inactive); }
+.wallet-status[data-status=active]::before { background: var(--color-marker-active); }
+.wallet-status[data-status=deploying]::before { background: var(--color-accent); }
+.wallet-figures { display: flex; flex-wrap: wrap; gap: 10px 32px; margin: 14px 0 0; padding: 0 5px; }
+.wallet-figures > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.wallet-figures dt { font: var(--font-caption); color: var(--color-text-muted); }
+.wallet-figures dd { font: var(--font-control); color: var(--color-text-primary); margin: 0; white-space: nowrap; }
+.wallet-detail.is-live a { color: var(--color-accent); text-decoration: none; }
+.wallet-detail.is-live a:hover { text-decoration: underline; }
+.wallet-detail.is-live .constraints button { text-align: start; }
+.wallet-detail.is-live .constraints button:disabled { color: var(--color-text-primary); }
+.wallet-rule-note, .wallet-plan-note { font: var(--font-caption); color: var(--color-text-secondary); margin-top: 10px; overflow-wrap: anywhere; }
+.wallet-rule-note.is-expired { color: var(--color-text-primary); }
+.transaction-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 12px; min-width: 0; }
+.transaction-meta time { white-space: nowrap; }
+.transaction-state { color: var(--color-text-muted); }
+.transaction-state[data-state=settled] { color: var(--color-text-primary); }
+.transaction-state[data-state=failed] { color: var(--color-error); }
+.transaction-card[data-state=failed] .transaction-amount, .transaction-card[data-state=pending] .transaction-amount { color: var(--color-text-muted); }
+.refusal-card { background: var(--color-surface); border: 1px dashed var(--color-border); padding: 14px; border-radius: 5px; flex-shrink: 0; }
+.refusal-card .transaction-amount { color: var(--color-text-muted); }
+.wallet-proof { margin-top: 16px; }
+.wallet-proof h3 { font: var(--font-label); color: var(--color-text-muted); margin: 0 0 6px; }
+.wallet-proof ul { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; font: var(--font-caption); }
+@media (max-width: 760px) {
+  .wallet-figures { gap: 8px 20px; padding: 0; }
+}
