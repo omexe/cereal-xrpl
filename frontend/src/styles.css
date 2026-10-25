@@ -383,3 +383,20 @@ dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
 .rules-actions .secondary-button, .rules-actions .primary-button { margin: 0; width: 100%; padding: 11px 16px; font: var(--font-control); }
 .rules-actions .secondary-button:disabled { color: var(--color-text-muted); }
 .rules-return { font: var(--font-body); margin: 16px 0 0; }
+
+/* unit 7 */
+/* Live wallet actions (WalletActions): the task run, done & sweep, reclaim, retire. */
+.wallet-actions { margin-top: 20px; display: flex; flex-direction: column; gap: 10px; max-width: 720px; }
+.wallet-actions .run { display: flex; flex-direction: column; gap: 6px; }
+.action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.action-button { font: var(--font-control); border: 1px solid var(--color-border); border-radius: 5px; padding: 6px 14px; color: var(--color-text-primary); background: var(--color-surface); }
+.action-button:disabled, .wallet-actions .primary-button:disabled { opacity: .4; }
+.action-status { font: var(--font-control); color: var(--color-text-primary); }
+.action-detail { font: var(--font-ui); color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.action-status.error, .action-detail.error, .action-list .error { color: var(--color-error); }
+.action-list { font: var(--font-ui); color: var(--color-text-secondary); list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.action-link { color: var(--color-accent); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.action-link:hover { text-decoration: underline; }
+.action-link svg { width: var(--icon-inline); height: var(--icon-inline); stroke-width: var(--icon-stroke); }
+.action-confirm { background: var(--color-surface-subtle); border: 1px solid var(--color-border); border-radius: 5px; padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.action-confirm p { font: var(--font-body); color: var(--color-text-primary); }
