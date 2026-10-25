@@ -6,17 +6,21 @@ import { ConstraintsDialog } from './components/ConstraintsDialog';
 import { FolderDialog } from './components/FolderDialog';
 import { FundsDialog } from './components/FundsDialog';
 import { NewWalletDialog } from './components/NewWalletDialog';
+import { AddSiteDialog } from './components/AddSiteDialog';
+import { SiteDetail } from './components/SiteDetail';
+import { SitesSection } from './components/SitesSection';
 import { SettingsDialog } from './components/SettingsDialog';
 import { WalletActions } from './components/WalletActions';
 import { WalletDetail } from './components/WalletDetail';
 import { formatAmount } from './format';
 import { isActive } from './live';
 import { isLive } from './mode';
+import { loadSession, saveSession, type Session } from './session';
 import { useLiveData } from './store';
 import { parseConstraints, type Wallet } from './wallets';
 import { useWorkspace } from './workspaceStore';
 
-type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | null;
+type Modal = 'wallet' | 'folder' | 'funds' | 'constraints' | 'settings' | 'site' | null;
 
 export default function App() {
   // Live mode never loads or seeds the mock workspace; every wallet comes from the cereal service.
@@ -25,7 +29,10 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(() => query.get('wallet') ?? mockWorkspace.wallets.find(w => !w.archived)?.id);
   const live = useLiveData(isLive, selectedId);
   const workspace = isLive ? live.workspace : mockWorkspace;
-  const [activeView, setActiveView] = useState<'home' | 'wallet'>(query.has('wallet') ? 'wallet' : 'home');
+  const [activeView, setActiveView] = useState<'home' | 'wallet' | 'site'>(query.has('wallet') ? 'wallet' : 'home');
+  const [session, setSessionState] = useState<Session | null>(() => isLive ? loadSession() : null);
+  const [selectedSiteId, setSelectedSiteId] = useState<string>();
+  const [siteUrl, setSiteUrl] = useState<string>();
   const [expandedFolders, setExpandedFolders] = useState<string[]>(['research-2']);
   const [modal, setModal] = useState<Modal>(query.get('setup') === 'research' || query.get('settings') === 'demo' ? 'settings' : null);
   const [mobileNav, setMobileNav] = useState(false);
@@ -67,6 +74,11 @@ export default function App() {
     if (folderId) setExpandedFolders(previous => [...new Set([...previous, folderId])]);
     setSelectedId(id); setActiveView('wallet'); setMobileNav(false); setPrompt(''); setPromptError(false); setWalletDescription('');
   }
+  function setSession(next: Session | null) { saveSession(next); setSessionState(next); }
+  function openSite(siteId: string) {
+    setSelectedSiteId(siteId); setActiveView('site'); setMobileNav(false); setPrompt(''); setPromptError(false); notify('');
+  }
+  function openAddSite(url?: string) { setSiteUrl(url); setModal('site'); }
   function goHome() {
     setSelectedId(activeWallets[0]?.id); setActiveView('home'); setMobileNav(false);
     setPrompt(''); setPromptError(false); notify('');
@@ -170,7 +182,8 @@ export default function App() {
 
   const app: AppActions = {
     workspace, activeWallets, selected, selectedId, setSelectedId, isHome, live, setWorkspace, updateWallet, showWallet,
-    moveWallet, toggleArchive, notify, close: () => { setModal(null); setWalletDescription(''); setRulesSentence(''); },
+    moveWallet, toggleArchive, notify, close: () => { setModal(null); setWalletDescription(''); setRulesSentence(''); setSiteUrl(undefined); },
+    session, setSession, selectedSiteId, openSite, openAddSite,
   };
   const liveBanner = isLive && (live.status === 'error'
     ? <p className="live-banner error" role="alert">{live.error ?? 'The cereal service is not reachable.'} Retrying every 5 seconds.</p>
@@ -204,6 +217,7 @@ export default function App() {
         {isHome && activeWallets.length > homeShown && <button className="wallet-more" onClick={() => setShowAllWallets(!showAllWallets)}>{showAllWallets ? 'Show fewer' : `+ ${activeWallets.length - homeShown} more`}</button>}
         {!activeWallets.length && (!isLive || live.status === 'ready') && <button className="empty-wallets" onClick={() => setModal('wallet')}>Create your first wallet</button>}
       </section>
+      {isLive && <SitesSection app={app} />}
       <section className="sidebar-section"><h2 className="section-heading muted">Archived Wallets</h2>
         {workspace.wallets.filter(w => w.archived).map(w => walletRow(w))}
       </section>
@@ -212,7 +226,8 @@ export default function App() {
     <main>
       <div className="workspace-content">
       {liveBanner}
-      {isHome ? <section className="home-stage" aria-label="Wallet home">
+      {activeView === 'site' && selectedSiteId ? <SiteDetail app={app} siteId={selectedSiteId} />
+      : isHome ? <section className="home-stage" aria-label="Wallet home">
         {isLive ? <div className="home-summary">
           <h1>{live.main ? formatAmount(live.main.rlusd) : '—'}</h1>
           <p>Main wallet on XRPL testnet · {runningWallets.length} active {runningWallets.length === 1 ? 'wallet' : 'wallets'}{live.main && Number(live.main.outstanding_budget) > 0 ? ` · ${formatAmount(live.main.outstanding_budget)} out in wallets` : ''}</p>
@@ -247,5 +262,6 @@ export default function App() {
     {modal === 'funds' && selected && <FundsDialog app={app} />}
     {modal === 'constraints' && selected && <ConstraintsDialog app={app} sentence={rulesSentence || undefined} />}
     {modal === 'settings' && <SettingsDialog app={app} />}
+    {modal === 'site' && <AddSiteDialog app={app} url={siteUrl} />}
   </div>;
 }

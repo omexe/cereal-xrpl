@@ -3,6 +3,7 @@
  * so a caller shows them instead of pretending something happened. Endpoints marked "contract" are implemented by
  * the feature routers in cereal/routes/. */
 import { API_BASE } from './mode';
+import { loadSession, type SessionUser } from './session';
 
 export type Decimal = string;
 export type Status = 'deploying' | 'active' | 'reclaimed' | 'recovered' | 'retired' | 'rejected' | 'failed';
@@ -99,6 +100,30 @@ export interface FundRequest { amount: Decimal; request_id?: string; speculos_de
 export interface FundResult { ok: true; amount: Decimal; budget: Decimal; balance: Decimal | null; hashes: Record<string, string | null>; approval?: DeviceApproval }
 
 export interface Folder { id: string; name: string }
+
+// ---- Sites (docs/SITES.md) ----
+export type SiteKind = 'free' | 'payable' | 'unpayable' | 'unreachable';
+export type SiteTrust = 'public' | 'private' | 'free' | 'blocked';
+export interface SiteCheck { name: string; ok: boolean | null; detail: string }
+export interface SitePayment {
+  network: string; asset: string; issuer: string; amount: Decimal; pay_to: string;
+  resource?: string | null; description?: string | null; invoice_id?: string | null;
+}
+export interface SiteProbe {
+  ok: true; url: string; origin: string; host: string; kind: SiteKind; status: number | null; title: string | null;
+  payment: SitePayment | null; accepts: { network?: string; asset?: string; amount?: string }[];
+  reason: string | null; credential: string | null; checks: SiteCheck[];
+  verdict: 'ok' | 'warn' | 'block'; verdict_reasons: string[]; trust_hint: SiteTrust | 'none';
+}
+export interface Site extends Omit<SiteProbe, 'ok'> {
+  id: string; owner: string; name: string; trust: SiteTrust; blocked_reason: string | null;
+  added_at: string; probed_at: string; wallets?: string[];
+}
+export interface SiteOpen {
+  ok: true; url: string; status: number; content_type: string | null; title: string | null; text: string;
+  truncated: boolean; bytes: number;
+}
+export interface SiteContent { ok: true; wallet: string; hash: string | null; paid: Decimal | null; content: unknown }
 export interface MetaChange { name?: string; folder?: string | null; archived?: boolean }
 
 export class ApiError extends Error {
@@ -131,6 +156,15 @@ export const REFUSAL_TEXT: Record<string, string> = {
   already_running: 'This wallet’s task is already running.',
   use_add_funds: 'Only Add funds can raise a wallet’s budget.',
   not_a_planned_purchase: 'Refused: this wallet may only buy what its plan lists.',
+  invalid_url: 'That is not a web address cereal can open.',
+  unsafe_url: 'cereal does not open private or local addresses.',
+  not_accessible: 'An agent cannot reach this site.',
+  site_blocked: 'This site is blocked.',
+  not_payable: 'This site does not take RLUSD on XRPL testnet.',
+  price_above_cap: 'That costs more than one site purchase may.',
+  not_delivered: 'The site was paid but did not deliver.',
+  nothing_bought: 'Nothing has been bought from this site yet.',
+  invalid_name: 'Pick a name between 1 and 40 characters.',
 };
 
 export function describeRefusal(body: Refusal): string {
@@ -144,10 +178,13 @@ export function describeError(error: unknown): string {
 
 async function request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
   let res: Response;
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers['content-type'] = 'application/json';
+  const session = loadSession();  // Sites: the signed-in user's bearer token (docs/SITES.md)
+  if (session) headers.authorization = `Bearer ${session.token}`;
   try {
     res = await fetch(`${API_BASE}${path}`, {
-      method, headers: body === undefined ? undefined : { 'content-type': 'application/json' },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      method, headers, body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
     throw new ApiError('network', 'The cereal service is not reachable.');
@@ -194,4 +231,15 @@ export const api = {
   folders: () => get<Folder[]>('/folders'),
   createFolder: (name: string) => post<{ ok: true; folder: Folder }>('/folders', { name }),
   updateMeta: (dep: string, change: MetaChange) => post<{ ok: true; wallet: ApiRecord }>(`/subagents/${id(dep)}/meta`, change),
+  // Sites (docs/SITES.md): routes/sessions.py, sites_probe.py, sites.py, site_access.py
+  createSession: (name: string) => post<{ ok: true; user: SessionUser; token: string }>('/session', { name }),
+  session: () => get<{ ok: true; user: SessionUser }>('/session'),
+  probeSite: (url: string) => post<SiteProbe>('/sites/probe', { url }),
+  sites: () => get<Site[]>('/sites'),
+  addSite: (url: string) => post<{ ok: true; site: Site }>('/sites', { url }),
+  removeSite: (site: string) => post<{ ok: true }>(`/sites/${id(site)}/remove`),
+  openSite: (site: string) => post<SiteOpen>(`/sites/${id(site)}/open`),
+  buySite: (site: string, body: { speculos_decision?: 'approve' | 'reject'; request_id?: string } = {}) =>
+    post<{ ok: true; wallet: ApiRecord; run: Run }>(`/sites/${id(site)}/buy`, body),
+  siteContent: (site: string) => get<SiteContent>(`/sites/${id(site)}/content`),
 };
