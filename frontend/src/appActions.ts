@@ -29,6 +29,7 @@ export interface AppActions {
   session: Session | null;
   setSession: (session: Session | null) => void;
   selectedSiteId?: string;
-  openSite: (siteId: string) => void;
+  /** Open a site's view; `message` shows in the status line once the view has changed. */
+  openSite: (siteId: string, message?: string) => void;
   openAddSite: (url?: string) => void;
 }
