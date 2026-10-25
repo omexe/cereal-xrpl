@@ -93,7 +93,7 @@ def parse_with_claude(sentence: str, known_names: list[str]) -> dict | None:
     return {**out, "vendor_names": out.get("vendor_names") or [], "parsed_by": llm.served_by}
 
 
-def build_card(sentence: str, known: list[dict] | None = None, reviewed: str | None = None) -> dict:
+def build_card(sentence: str, known: list[dict] | None = None, reviewed: str | None = None, owner: dict | None = None) -> dict:
     """Parse, resolve every vendor against the directory and the ledger, apply defaults, and list what's wrong.
 
     `reviewed`: the digest of a card this service built and showed for this sentence. Its reading of the sentence is
@@ -109,7 +109,9 @@ def build_card(sentence: str, known: list[dict] | None = None, reviewed: str | N
                 if llm.available() else []
             raw = {**parse_fallback(sentence), "parse_notes": fell_back}
     problems, notes, allowed, vendors_out = [], list(raw.get("parse_notes") or []), [], []
-    for n in raw.get("vendor_names") or []:
+    urls = site_urls(sentence)
+    names = [n for n in raw.get("vendor_names") or [] if not _names_a_site(n, urls)]
+    for n in names:
         addr = directory.resolve(n, known)
         v = next((x for x in known if x["address"] == addr), None)
         status = (v or {}).get("credential", {}).get("status") if v else None
@@ -128,6 +130,7 @@ def build_card(sentence: str, known: list[dict] | None = None, reviewed: str | N
         problems.append("no budget in the sentence")
     elif budget > Decimal(str(config.MAX_SUBAGENT_BUDGET)):
         problems.append(f"budget {budget} is over the company cap of {config.MAX_SUBAGENT_BUDGET} RLUSD per wallet")
+    site_specs, sites = _site_vendors(urls, owner, budget, vendors_out, allowed, problems, notes)
     threshold = raw.get("approval_threshold")
     if threshold is not None:
         try:
@@ -140,10 +143,13 @@ def build_card(sentence: str, known: list[dict] | None = None, reviewed: str | N
     hours = raw.get("expires_in_hours") or 24
     if not raw.get("expires_in_hours"):
         notes.append("no duration given: the wallet expires in 24 hours")
-    if not raw.get("vendor_names"):
+    if not names and not urls:
         notes.append("no vendors named: any vendor with a valid cereal credential")
     card = {"name": raw.get("name") or "Wallet", "sentence": sentence, "budget": str(budget), "currency": "RLUSD",
             "expires_in_hours": float(hours), "vendors": vendors_out, "allowed_payees": allowed,
+            # Sites (docs/SITES.md): when the sentence names any vendor or site, the payee list is exactly `allowed`,
+            # even if empty (only free sites named): never "any credentialed vendor".
+            "payees_locked": bool(names or urls), "site_specs": site_specs, "sites": sites,
             "approval_threshold": threshold, "sweep_when_done": bool(raw.get("sweep_when_done", True)),
             "parsed_by": raw.get("parsed_by"), "problems": problems, "notes": notes}
     card["ok"] = not problems
@@ -194,7 +200,8 @@ def card_digest(card: dict) -> str:
                 "expires_in_hours": float(card.get("expires_in_hours") or 0),
                 "allowed_payees": sorted(card.get("allowed_payees") or []),
                 "approval_threshold": _canon_amount(card.get("approval_threshold")),
-                "sweep_when_done": bool(card.get("sweep_when_done")), "vendors": vendors}
+                "sweep_when_done": bool(card.get("sweep_when_done")), "vendors": vendors,
+                "payees_locked": bool(card.get("payees_locked")), "site_specs": sorted(card.get("site_specs") or [])}
     blob = json.dumps(enforced, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(blob.encode()).hexdigest()
 
@@ -203,9 +210,12 @@ def summary(card: dict) -> str:
     """The card read back as one plain sentence, built from the parsed values, for the owner to confirm."""
     days = card["expires_in_hours"] / 24
     span = f"{days:g} day{'s' if days != 1 else ''}" if card["expires_in_hours"] >= 24 else f"{card['expires_in_hours']:g} hours"
-    names = [v["name"] or v["named"] for v in card["vendors"]]
+    names = [v["name"] or v["named"] for v in card["vendors"] if (v.get("site") or {}).get("trust") not in ("free", "blocked")]
+    free = [v["name"] or v["named"] for v in card["vendors"] if (v.get("site") or {}).get("kind") == "free"]
     where = ("only at " + (", ".join(names[:-1]) + " and " + names[-1] if len(names) > 1 else names[0])) if names \
-        else "at any trusted vendor"
+        else ("at no paid vendor" if card.get("payees_locked") else "at any trusted vendor")
+    if free:
+        where += f" (reads {', '.join(free)} for free)"
     ask = f" Your Ledger approves any payment above {card['approval_threshold']} RLUSD." if card["approval_threshold"] else ""
     sweep = " Leftovers return to the main wallet when it is done." if card["sweep_when_done"] else ""
     return f"Spend up to {card['budget']} RLUSD over {span}, {where}.{ask}{sweep}"
@@ -222,3 +232,119 @@ in_progress: set[str] = set()
 def find_request(request_id: str) -> dict | None:
     """The record an earlier POST /wallets with this request_id left: its wallet, or the refusal that made a record."""
     return next((r for r in deployments.all_() if r.get("request_id") == request_id), None)
+
+# ---- Sites in a wallet sentence (docs/SITES.md) -------------------------------------------------------------------
+URL_RE = re.compile(r"https?://[^\s,;<>\"')\]]+", re.I)
+MAX_SITES = 5
+
+
+# A bare web address ("npr.org", "www.npr.org/news"): a host ending in a common top-level domain, not part of an email.
+BARE_RE = re.compile(r"(?<![@\w.-])((?:www\.)?(?:[a-z0-9-]+\.)+(?:com|org|net|io|ai|dev|app|co|gov|edu|news|info|us|me|tv|xyz))"
+                     r"(/[^\s,;<>\"')\]]*)?(?![\w-])", re.I)
+
+
+def site_urls(sentence: str) -> list[str]:
+    """The web addresses a sentence names, in order, without trailing punctuation, at most MAX_SITES. A bare address
+    ("npr.org") means https, like typing it in a browser."""
+    out: list[str] = []
+    text = sentence or ""
+    for m in URL_RE.finditer(text):
+        u = m.group(0).rstrip(".!?:")
+        if u not in out:
+            out.append(u)
+    rest = URL_RE.sub(" ", text)  # bare addresses are looked for only outside full URLs
+    for m in BARE_RE.finditer(rest):
+        u = "https://" + (m.group(1) + (m.group(2) or "")).rstrip(".!?:")
+        if u not in out and u.rstrip("/") not in [o.rstrip("/") for o in out]:
+            out.append(u)
+    return out[:MAX_SITES]
+
+
+def _host(url: str) -> str:
+    from urllib.parse import urlsplit
+    return (urlsplit(url).hostname or "").lower()
+
+
+def _names_a_site(name: str, urls: list[str]) -> bool:
+    """A vendor name the reader pulled out of one of the URLs ("https://npr.org", "npr.org", "NPR"): it is a site."""
+    n = (name or "").strip().lower().rstrip("/")
+    if "://" in n:
+        return True
+    for u in urls:
+        host = _host(u)
+        labels = {host, host.removeprefix("www."), host.removeprefix("www.").split(".")[0]}
+        if n in labels or n == u.lower().rstrip("/"):
+            return True
+    return False
+
+
+def _archive_hint(p: dict) -> str:
+    """For a site that blocks agents: the public archived copy to use instead, if the probe found one."""
+    a = p.get("archive") or {}
+    if not a.get("url"):
+        return ""
+    return f" Its {a.get('source') or 'archived'} copy from {str(a.get('timestamp') or '')[:10]} can be read instead: {a['url']}"
+
+
+def _site_vendors(urls: list[str], owner: dict | None, budget: Decimal, vendors_out: list, allowed: list,
+                  problems: list, notes: list) -> tuple[list[str], list[dict]]:
+    """Each URL in the sentence, checked like Sites does (sites_probe.probe), becomes a vendor on the card:
+      free page        → readable for free, no payee (cereal reads it directly)
+      payable, credential valid → public: its payTo is an allowed payee (cereal co-signs within the rules)
+      payable, no credential    → private to the signed-in owner: allowed, and the owner's Ledger signs every payment
+      blocked / unpayable / unreachable / not signed in → a problem, never silently dropped
+    Returns (the run's --buy specs for paid sites, the probes to register as the owner's sites)."""
+    if not urls:
+        return [], []
+    from . import sites_probe
+    specs, sites, cost = [], [], Decimal(0)
+    for url in urls:
+        p = sites_probe.probe(url)
+        if not p.get("ok"):
+            problems.append(f"{url}: {p.get('reason') or p.get('refused')}")
+            continue
+        host = p.get("host") or _host(url)
+        entry = {"named": url, "address": None, "name": host.removeprefix("www."), "credential": None, "title": p.get("title"),
+                 "site": {"url": p["url"], "kind": p["kind"], "trust": None, "price": None}}
+        if p["kind"] == "free":
+            entry["site"]["trust"] = "free"
+            vendors_out.append(entry); sites.append(p)
+            notes.append(f"{host} is free: cereal reads it directly, no payment needed")
+            continue
+        if p["kind"] in ("unreachable", "unpayable"):
+            entry["site"].update(trust="blocked", reason=p.get("reason"), blocked_by=p.get("blocked_by"))
+            vendors_out.append(entry)  # shown, so the owner sees the address was read, and why it can't be used
+            problems.append((p.get("reason") or f"{host} cannot be used") + _archive_hint(p))
+            continue
+        pay = p.get("payment") or {}
+        entry.update(address=pay.get("pay_to"), credential=p.get("credential"),
+                     name=(pay.get("description") or "").split(":")[0].strip() or host)
+        entry["site"]["price"] = pay.get("amount")
+        if p.get("verdict") == "block":
+            why = (p.get("verdict_reasons") or ["it failed cereal's checks"])[0]
+            entry["site"].update(trust="blocked", reason=why)
+            vendors_out.append(entry)
+            problems.append(f"{host} is blocked: {why}")
+            continue
+        if p.get("credential") == "valid":
+            entry["site"]["trust"] = "public"
+        elif owner:
+            entry["site"]["trust"] = "private"
+            notes.append(f"{host} has no cereal credential: it becomes one of {owner.get('name') or 'your'}'s private "
+                         "sites, and your Ledger signs every payment to it")
+        else:
+            problems.append(f"sign in to use {host}: it has no cereal credential, so only your own wallets can pay it "
+                            "(as a private site, your Ledger signs every payment)")
+            continue
+        vendors_out.append(entry); sites.append(p)
+        if pay.get("pay_to") and pay["pay_to"] not in allowed:
+            allowed.append(pay["pay_to"])
+        try:
+            cost += Decimal(str(pay.get("amount") or "0"))
+        except InvalidOperation:
+            pass
+        specs.append(f"{p['url']}@{pay.get('amount')}")
+    if budget > 0 and cost > budget:
+        problems.append(f"the sites cost {cost} RLUSD, more than the {budget} RLUSD budget")
+    return specs, sites
+

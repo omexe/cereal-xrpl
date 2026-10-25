@@ -76,10 +76,17 @@ export interface SecurityEvent {
   what?: string; why?: string; outcome?: string; proof?: string | null;
 }
 
-export interface CardVendor { named: string; address?: string | null; name?: string; credential?: string }
+/** A vendor on a wallet card. `site`: the vendor came from a URL in the sentence (docs/SITES.md): a free site needs
+ * no payment; a paid site is public (cereal-credentialed) or private (the owner's Ledger signs every payment). */
+export interface CardVendor {
+  named: string; address?: string | null; name?: string; credential?: string | null;
+  site?: { url: string; kind: SiteKind; trust: SiteTrust | null; price: Decimal | null; reason?: string | null; blocked_by?: string | null } | null;
+}
 export interface WalletCard {
   ok: boolean; name: string; sentence: string; budget: Decimal; currency: string; expires_in_hours: number;
   vendors: CardVendor[]; allowed_payees: string[]; approval_threshold: Decimal | null; sweep_when_done: boolean;
+  /** Sites: the payee list is exact (even empty) because the sentence named its vendors or sites. */
+  payees_locked?: boolean;
   parsed_by?: string | null; problems: string[]; notes: string[]; summary: string;
   /** contract (R07): digest of the reviewed card; creation is refused if the rebuilt card differs. */
   digest?: string;

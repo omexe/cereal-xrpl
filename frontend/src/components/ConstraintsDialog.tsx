@@ -210,7 +210,9 @@ function LiveConstraints({ app, wallet, live, sentence }: { app: AppActions; wal
       </div>
       <fieldset className="rules-merchants" disabled={!!busy}>
         <legend>Allowed merchants</legend>
-        {!initial.merchants.length && <p className="demo-note">Any credentialed vendor today. Check vendors to narrow the list.</p>}
+        {!initial.merchants.length && <p className="demo-note">{live.record.payees_locked === true
+          ? 'No paid vendors today: this wallet only named free sites. Check vendors to let it pay them.'
+          : 'Any credentialed vendor today. Check vendors to narrow the list.'}</p>}
         {!options.length && <p className="demo-note">Loading cereal’s vendor directory…</p>}
         {options.map(option => {
           const checked = form.merchants.includes(option.address);

@@ -60,8 +60,14 @@ function duration(hours: number): string {
   return `${h} ${h === 1 ? 'hour' : 'hours'}`;
 }
 
-/** valid → allowed. revoked, or not in cereal's directory (unknown), or any other state → not allowed. */
-function credentialState(v: CardVendor): { state: string; allowed: boolean } {
+/** valid → allowed. revoked, or not in cereal's directory (unknown), or any other state → not allowed. A vendor read
+ * from a URL (a site) says how it is paid: free (no payment), public (cereal co-signs) or private (your Ledger signs). */
+function credentialState(v: CardVendor): { state: string; allowed: boolean; label?: string } {
+  if (v.site?.trust === 'blocked') return { state: 'blocked', allowed: false,
+    label: v.site.blocked_by ? `blocks AI agents (${v.site.blocked_by}) · not allowed` : 'site cereal can’t use · not allowed' };
+  if (v.site?.trust === 'free') return { state: 'free', allowed: true, label: 'free site · no payment needed' };
+  if (v.site?.trust === 'public') return { state: 'valid', allowed: true, label: `site · credential valid${v.site.price ? ` · ${formatAmount(v.site.price)}` : ''}` };
+  if (v.site?.trust === 'private') return { state: 'private', allowed: true, label: `your private site · your Ledger signs${v.site.price ? ` · ${formatAmount(v.site.price)}` : ''}` };
   if (!v.address) return { state: 'unknown', allowed: false };
   if (v.credential === 'valid') return { state: 'valid', allowed: true };
   return { state: v.credential || 'unknown', allowed: false };
@@ -213,14 +219,14 @@ function LiveNewWalletDialog({ app, description }: { app: AppActions; descriptio
         <div><dt>Budget</dt><dd data-field="budget">{formatAmount(card.budget)}</dd></div>
         <div><dt>Duration</dt><dd>{duration(card.expires_in_hours)}</dd></div>
         <div><dt>Vendors</dt><dd>{card.vendors.length ? <ul className="card-vendors">{card.vendors.map((v, i) => {
-          const { state, allowed } = credentialState(v);
+          const { state, allowed, label } = credentialState(v);
           return <li key={`${v.named}-${i}`} className={`card-vendor ${allowed ? '' : 'not-allowed'}`} data-credential={state}>
             {allowed ? <CheckCircle aria-hidden /> : state === 'revoked' ? <XCircle aria-hidden /> : <AlertCircle aria-hidden />}
             <span>{v.name ?? v.named}</span>
-            <span className="card-vendor-state">{allowed ? 'credential valid' : `${state} · not allowed`}</span>
+            <span className="card-vendor-state">{label ?? (allowed ? 'credential valid' : `${state} · not allowed`)}</span>
             {v.address && <span className="card-address" title={v.address}>{shortAddress(v.address)}</span>}
           </li>;
-        })}</ul> : 'Any vendor with a valid cereal credential'}</dd></div>
+        })}</ul> : card.payees_locked ? 'No paid vendors' : 'Any vendor with a valid cereal credential'}</dd></div>
         <div><dt>Ask me above</dt><dd>{card.approval_threshold ? `${formatAmount(card.approval_threshold)} (your Ledger signs instead of cereal)` : 'No approval threshold'}</dd></div>
         <div><dt>When done</dt><dd>{card.sweep_when_done ? 'Sweep leftovers back to the main wallet' : 'Keep leftovers in the wallet'}</dd></div>
         <div><dt>Folder</dt><dd>{folderName}</dd></div>

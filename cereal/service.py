@@ -308,15 +308,16 @@ def deploy(req: DeployRequest) -> dict:
 
 
 @app.post("/wallets/preview")
-def wallet_preview(req: WalletRequest) -> dict:
+def wallet_preview(req: WalletRequest, request: Request = None) -> dict:
     """Part 5: a plain-English sentence → the limits card the owner confirms, with the `digest` of what it enforces
     (R07: pass it back as `card_digest` when creating). Reads only; signs and sends nothing."""
-    from . import wallet_card
-    return wallet_card.build_card(req.sentence)
+    from . import owners, wallet_card
+    owner = owners.current_user(request) if request is not None else None
+    return wallet_card.build_card(req.sentence, **({"owner": owner} if owner else {}))
 
 
 @app.post("/wallets")
-def wallet_create(req: WalletRequest) -> dict:
+def wallet_create(req: WalletRequest, request: Request = None) -> dict:
     """Create a disposable wallet from a sentence. The card is rebuilt here from the sentence (a client's copy of the
     card is never trusted), refused if it has problems, then deployed with the owner's Ledger approval as usual.
 
@@ -326,7 +327,8 @@ def wallet_create(req: WalletRequest) -> dict:
     R03: with `request_id`, a repeat returns the first outcome (same wallet id, `replayed: true`, its current status),
     including a refusal that left a record (owner_rejected); a concurrent twin is refused `in_progress`. A deploy that
     raised after its record existed is kept as `deploy_interrupted` on that record, so a retry never deploys again."""
-    from . import wallet_card
+    from . import owners, wallet_card
+    owner = owners.current_user(request) if request is not None else None  # Sites: a private site makes it this user's
     rid = req.request_id
     if rid:
         with wallet_card.requests_lock:
@@ -347,8 +349,9 @@ def wallet_create(req: WalletRequest) -> dict:
                 return {**prior["create_refusal"], "card": prior.get("card"), "replayed": True}
             return {"ok": True, **_with_balance(prior), "replayed": True}
     try:
-        card = wallet_card.build_card(req.sentence, reviewed=req.card_digest) if req.card_digest \
-            else wallet_card.build_card(req.sentence)
+        signed_in = {"owner": owner} if owner else {}  # only a signed-in user's sentence can name private sites
+        card = wallet_card.build_card(req.sentence, reviewed=req.card_digest, **signed_in) if req.card_digest \
+            else wallet_card.build_card(req.sentence, **signed_in)
         if req.card_digest and card.get("digest") != req.card_digest:
             return _refuse("card_changed", card=card, reviewed_digest=req.card_digest, sent_transactions=0)
         if not card["ok"]:
@@ -376,7 +379,16 @@ def wallet_create(req: WalletRequest) -> dict:
             return {**out, "card": card}
         # The card the owner confirmed, and the request that made this record (successes and refusals alike).
         kept = {"card": card, "card_digest": card.get("digest"), **({"request_id": rid} if rid else {}),
-                **({} if out.get("ok") else {"create_refusal": out})}
+                **({} if out.get("ok") else {"create_refusal": out}),
+                # Sites: the payee list is exact when the sentence named any vendor or site; a run buys the named
+                # paid sites; a wallet that pays a private site belongs to its owner (the co-signer reads `owner`).
+                **({"payees_locked": True} if card.get("payees_locked") else {}),
+                **({"site_specs": card["site_specs"]} if card.get("site_specs") else {}),
+                **({"owner": owner["id"]} if owner and card.get("sites") else {})}
+        if owner and out.get("ok"):
+            from . import site_registry
+            for probe in card.get("sites") or []:  # private before any payment: the co-signer checks the owner's list
+                site_registry.add(owner["id"], probe)
         deployments.update(dep_id, **kept)
         return {**out, **{k: v for k, v in kept.items() if k != "create_refusal"}}
     finally:
@@ -589,7 +601,7 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
         from . import site_registry
         if site_registry.trust_for(rec["owner"], tx.destination) == "blocked":
             return _refuse("site_blocked", payee=tx.destination)
-    if rec["allowed_payees"] and tx.destination not in rec["allowed_payees"]:  # optional narrower filter
+    if (rec["allowed_payees"] or rec.get("payees_locked")) and tx.destination not in rec["allowed_payees"]:  # optional narrower filter
         return _refuse("payee_not_allowed", payee=tx.destination, allowed=rec["allowed_payees"])
     amt = tx.amount
     if not isinstance(amt, IssuedCurrencyAmount) or amt.currency != config.RLUSD_CURRENCY:

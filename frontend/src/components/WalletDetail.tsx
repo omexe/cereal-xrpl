@@ -5,6 +5,7 @@ import {
   settledByMerchant, shortHash, spending, statusLabel, uniquePayments, type PaymentItem, type RefusalItem,
 } from '../activity';
 import type { Vendor } from '../api';
+import type { CardVendor } from '../api';
 import { explorerAccount, formatAmount, shortAddress } from '../format';
 import { ACTIVE_STATUSES } from '../live';
 import type { DemoPayment } from '../researchDemo';
@@ -188,7 +189,13 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
   const items = activityItems(rec, nameOf);
   const summary = activitySummary(items);
   const skipped = planSkipped(rec.plan);
-  const payees = (rec.allowed_payees ?? []).map(nameOf);
+  // Sites named in the wallet's sentence (docs/SITES.md): a paid site is named by its site name, a free one is read
+  // for free, and a wallet that named its vendors pays exactly them, never "any credentialed vendor".
+  const siteVendors = ((rec.card as { vendors?: CardVendor[] } | undefined)?.vendors ?? []).filter(v => v.site);
+  const siteName = new Map(siteVendors.filter(v => v.address).map(v => [v.address as string, v.name ?? v.named]));
+  const freeSites = siteVendors.filter(v => v.site?.trust === 'free').map(v => v.name ?? v.named);
+  const payeesLocked = rec.payees_locked === true;
+  const payees = (rec.allowed_payees ?? []).map(address => siteName.get(address) ?? nameOf(address));
   const active = live.status === 'active';
   const editable = active && !wallet.archived;
   const finished = !ACTIVE_STATUSES.includes(live.status);
@@ -238,7 +245,10 @@ function LiveWalletDetail({ wallet, vendors, onAddFunds, onEditConstraints, onRe
         Spend up to <button {...rule}>{money(live.budget)}</button> over <button {...rule}>{duration}</button>,{' '}
         {payees.length ? <>only at{' '}{payees.map((payee, index, list) => <span key={`${payee}-${index}`}>
           <button {...rule}>{payee}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : '. '}
-        </span>)}</> : <>at <button {...rule}>any credentialed vendor</button>. </>}
+        </span>)}</> : payeesLocked ? <><button {...rule}>pays no vendor</button>. </> : <>at <button {...rule}>any credentialed vendor</button>. </>}
+        {freeSites.length > 0 && <>Reads {freeSites.map((site, index, list) => <span key={site}>
+          <button {...rule}>{site}</button>{index < list.length - 2 ? ', ' : index === list.length - 2 ? ' and ' : ''}
+        </span>)} for free. </>}
         {live.approval !== null && live.approval !== ''
           ? <>Ask me <button {...rule}>above {money(live.approval)}</button>. </>
           : <><button {...rule}>cereal co-signs every payment</button>. </>}

@@ -389,6 +389,8 @@ def start(dep_id: str, specs: list[str] | None = None, task: str | None = None, 
             return _refuse("balance_unavailable", hint="the ledger could not be read; nothing was started")
         if envelope <= 0:
             return _refuse("over_budget", remaining=str(envelope))
+        if specs is None and rec.get("site_specs"):  # a wallet created from a sentence that named paid sites buys them
+            specs = list(rec["site_specs"])
         if specs is None:
             plan, specs, refused = _plan(rec, envelope, task, repeat_completed=keep_open)
         else:
