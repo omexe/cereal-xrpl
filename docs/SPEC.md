@@ -39,7 +39,7 @@ Status Sat Oct 24 ~7 PM EDT: Part 1 built and verified on testnet. The build ord
 | Reclaim | `Payment` remainder → main wallet, then `TrustSet` limit 0 + `tfSetNoRipple` (multisigned) | trust line must reach default state or delete fails |
 | Retire | `AccountDelete` → main wallet (multisigned, `fail_hard`) | allowed once Sequence + 256 < current ledger (~15 min after activation); returns the reserve |
 
-Every transaction carries `SourceTag` 20260601 and a cereal memo: `MemoType` hex("cereal/job"), `MemoFormat` hex("application/json"), `MemoData` hex(`{"job":"<deployment_id>","tag":"<hmac>","kind":"activate|lock|fund|pay|reclaim|retire"}`).
+Every transaction carries `SourceTag` 2610250032 (the hackathon's tag; 20260601 before 2026-10-25) and a cereal memo: `MemoType` hex("cereal/job"), `MemoFormat` hex("application/json"), `MemoData` hex(`{"job":"<deployment_id>","tag":"<hmac>","kind":"activate|lock|fund|pay|reclaim|retire"}`).
 
 ### 1.3 Deployment record (`deployments.json`, gitignored)
 ```json

@@ -21,7 +21,7 @@ const SPECULOS = process.env.SPECULOS_URL ?? "http://127.0.0.1:5000";
 const MODEL = process.env.SPECULOS_MODEL ?? "nanosp";
 const PATH = process.env.LEDGER_PATH ?? "44'/144'/0'/0/0";
 const WS = process.env.QUICKNODE_XRPL_WS || process.env.XRPL_TESTNET_WS_URL || "wss://s.altnet.rippletest.net:51233";
-const SOURCE_TAG = Number(process.env.CEREAL_SOURCE_TAG ?? "20260601");
+const SOURCE_TAG = Number(process.env.CEREAL_SOURCE_TAG ?? "2610250032");  // the hackathon's XRPL source tag
 const RLUSD_CURRENCY = "524C555344000000000000000000000000000000";
 const RLUSD_ISSUER = process.env.RLUSD_TESTNET_ISSUER ?? "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV";
 

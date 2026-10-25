@@ -25,7 +25,7 @@ def rows_for_burner(c: JsonRpcClient, burner_addr: str) -> list[dict]:
     out = []
     for t in account_tx(c, burner_addr):
         tx = t["tx"]
-        if tx.get("SourceTag") != config.SOURCE_TAG:
+        if tx.get("SourceTag") not in (config.SOURCE_TAG, *config.PAST_SOURCE_TAGS):
             continue
         memos = decode_memos(tx)
         tag = memos[0].get("tag", "") if memos else ""

@@ -71,7 +71,7 @@ for item, price in ITEMS.items():  # one paywall per item, each with its own pri
             asset=RLUSD_HEX,
             issuer=RLUSD_ISSUER,
             description=f"{VENDOR}: {item} (sample data), per request",
-            source_tag=int(os.getenv("XRPL_SOURCE_TAG", "20260601")),
+            source_tag=int(os.getenv("XRPL_SOURCE_TAG", "2610250032")),  # the hackathon's XRPL source tag
         )
     )
 

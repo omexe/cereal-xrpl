@@ -13,7 +13,8 @@ load_dotenv(ROOT / ".env")
 RPC_URL = os.getenv("QUICKNODE_XRPL_HTTP") or os.getenv("XRPL_TESTNET_RPC_URL") or "https://s.altnet.rippletest.net:51234/"
 WS_URL = os.getenv("QUICKNODE_XRPL_WS") or os.getenv("XRPL_TESTNET_WS_URL") or "wss://s.altnet.rippletest.net:51233"
 EXPLORER = "https://testnet.xrpl.org"
-SOURCE_TAG = int(os.getenv("CEREAL_SOURCE_TAG", "20260601"))
+SOURCE_TAG = int(os.getenv("CEREAL_SOURCE_TAG", "2610250032"))  # the hackathon's XRPL source tag (XRPL Commons, NYC)
+PAST_SOURCE_TAGS = (20260601,)  # cereal's tag before 2026-10-25: earlier transactions still belong in exports
 TAG_HMAC_KEY = os.getenv("CEREAL_TAG_HMAC_KEY", "change-me").encode()
 COSIGN_URL = os.getenv("COSIGN_URL", "http://localhost:8001/cosign")
 RLUSD_ISSUER = os.getenv("RLUSD_TESTNET_ISSUER", "rQhWct2fv4Vc4KRjRgMrxa8xPN9Zx9iLKV")
