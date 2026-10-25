@@ -56,6 +56,9 @@ class DeployRequest(BaseModel):
     folder: str | None = None                # the design's folders (e.g. "Market Research"); shows in the export
     sentence: str | None = None              # the plain-English sentence it was created from
     speculos_payment_decision: str | None = None  # Speculos demos only: the owner's button for large payments
+    # R03: the caller's idempotency key (e.g. a UUID per click). A repeat returns the first request's outcome
+    # (same deployment, `replayed: true`) and sends nothing new. Stored on the record.
+    request_id: str | None = None
 
 
 class WalletRequest(BaseModel):
@@ -144,8 +147,75 @@ def main_wallet() -> dict:
                      "MAX_ACTIVE_SUBAGENTS": config.MAX_ACTIVE_SUBAGENTS}}
 
 
+MAX_REQUEST_ID = 128
+
+
+def _request_terms(req: DeployRequest) -> dict:
+    """R03: the terms a deploy request asks for, kept on the record so a repeat is compared with the request as it was
+    sent (a later top-up or rules edit of the wallet is not a conflict)."""
+    return {"task": req.task, "budget": str(req.budget), "allowed_payees": sorted(req.allowed_payees),
+            "vendor_class": req.vendor_class, "expires_in_hours": req.expires_in_hours,
+            "approval_threshold": req.approval_threshold, "sweep_when_done": bool(req.sweep_when_done)}
+
+
+def _same_term(key: str, a, b) -> bool:
+    if key == "allowed_payees":
+        return sorted(a or []) == sorted(b or [])
+    if key in ("budget", "expires_in_hours", "approval_threshold"):
+        if a in (None, "") or b in (None, ""):
+            return a in (None, "") and b in (None, "")
+        try:
+            return Decimal(str(a)) == Decimal(str(b))
+        except ArithmeticError:  # decimal.InvalidOperation
+            return False
+    return a == b
+
+
+def _request_conflict(rec: dict, req: DeployRequest) -> list[str]:
+    """R03: the terms where a repeat of a request_id differs from the request that used it first."""
+    first = rec.get("deploy_request") or {"budget": rec["budget"], "allowed_payees": rec.get("allowed_payees") or [],
+                                          "vendor_class": rec.get("vendor_class", "data")}
+    now = _request_terms(req)
+    return [k for k, v in first.items() if not _same_term(k, v, now.get(k))]
+
+
+def _replay(rec: dict, req: DeployRequest) -> dict:
+    """R03: the outcome of the deploy that already used this request_id. Nothing is signed or sent."""
+    differs = _request_conflict(rec, req)
+    if differs:
+        return _refuse("request_id_reused", request_id=req.request_id, deployment=rec["id"], differs=differs,
+                       sent_transactions=0, hint="this request_id already deployed a different request; send a new one")
+    if rec.get("outcome"):  # a refusal that created the record (rejected on the device, lock or funding failed, ...)
+        return {**rec["outcome"], "replayed": True}
+    if rec["status"] == "deploying":  # still running, or stopped by a crash or restart: never deployed a second time
+        return _refuse("in_progress", request_id=req.request_id, deployment=rec["id"], status="deploying",
+                       subwallet=rec.get("subwallet"), hashes=rec.get("hashes") or {}, replayed=True,
+                       hint="the deploy with this request_id has not finished; nothing new was sent")
+    if rec["status"] in ("rejected", "failed"):
+        return _refuse(rec["status"], deployment=rec["id"], replayed=True)
+    return {"ok": True, **_with_balance(rec), "replayed": True}
+
+
 @app.post("/subagents")
 def deploy(req: DeployRequest) -> dict:
+    """Deploy a subagent into a new locked subwallet funded with exactly its budget.
+
+    Caps (R02): checked once early (a fast refusal) and again inside the main-wallet lock, where the check and the
+    `deploying` record are one locked write (deployments.reserve), so concurrent deploys never both pass a stale count.
+
+    Idempotency (R03): the request_id is on the record from its first write. A repeat returns the first request's
+    outcome (same deployment, `replayed: true`), including refusals that created a record (rejected, failed), and sends
+    nothing new; a repeat with different terms is refused `request_id_reused`. A concurrent twin is refused
+    `in_progress` at once (as POST /wallets does), so no request thread waits out another's device approval; asking
+    again once the first has finished replays its outcome. A record left `deploying` by a crash or restart stays
+    `in_progress` and is never deployed again. Refusals that created no record (caps, balances, device unavailable,
+    an error before anything reached the ledger) are evaluated afresh on a repeat; nothing was sent for them.
+    """
+    if req.request_id and len(req.request_id) > MAX_REQUEST_ID:
+        return _refuse("invalid_request_id", max_length=MAX_REQUEST_ID)
+    prior = deployments.find_request(req.request_id)
+    if prior:  # finished, refused, a conflict or still deploying: answered now, without the main-wallet lock
+        return _replay(prior, req)
     refused = deployments.check_caps(req.budget)
     if refused:
         return refused
@@ -154,6 +224,9 @@ def deploy(req: DeployRequest) -> dict:
         return _refuse("no_payee_policy", hint="vendor credentials are off: pass allowed_payees")
     c = client(); main_addr = config.address("TREASURY")
     with _main_wallet:
+        prior = deployments.find_request(req.request_id)
+        if prior:  # a twin reserved it while this one waited on the lock
+            return _replay(prior, req)
         if rlusd_balance(c, main_addr) < Decimal(req.budget):
             return _refuse("insufficient_main_balance", rlusd=str(rlusd_balance(c, main_addr)), requested=req.budget)
         if Decimal(int(account_info(c, main_addr)["Balance"])) / 1_000_000 < subwallets.activation_xrp(c) + 1:
@@ -161,50 +234,73 @@ def deploy(req: DeployRequest) -> dict:
         if config.DEVICE_FUNDING and not device.available():
             return _refuse("device_unavailable", speculos=config.SPECULOS_URL,
                            hint="start the device (docker start speculos-xrp) or set CEREAL_DEVICE_FUNDING=0")
-        rec = deployments.create(req.task, req.budget, payees, req.expires_in_hours, req.vendor_class)
-        if req.plan:
-            rec = deployments.update(rec["id"], plan=req.plan)
-        extra = {k: v for k, v in {"approval_threshold": req.approval_threshold, "name": req.name, "folder": req.folder,
-                                   "sentence": req.sentence, "sweep_when_done": req.sweep_when_done or None,
-                                   "speculos_payment_decision": req.speculos_payment_decision}.items() if v is not None}
-        if extra:
-            rec = deployments.update(rec["id"], **extra)
-        sub_key = keystore.new_subagent_key(rec["id"])
-        deployments.update(rec["id"], subagent=sub_key)
-        sub = Wallet.create()  # the subwallet's address exists before anything is on-ledger, so the owner sees it
-        approval = None
-        if config.DEVICE_FUNDING:
-            # Part 3: the owner approves the budget on the device FIRST. The funding Payment takes the main wallet's
-            # next-but-one Sequence (activation takes the next), is signed now and submitted after the lock.
-            seq = int(account_info(c, main_addr)["Sequence"])
-            pay = funding_payment(main_addr, sub.classic_address, req.budget, rec["id"], rec["tag"])
-            pay = Transaction.from_dict({**pay.to_dict(), "sequence": seq + 1})
-            decision = None if config.DEVICE_DECISION == "manual" else req.speculos_decision
-            approval = device.sign(prepare(pay, c, signers_count=1, window=config.DEVICE_WINDOW_LEDGERS), decision)
-            deployments.update(rec["id"], approval={
-                "by": approval.get("address") or config.LEDGER_ADDRESS,
-                "result": "approved" if approval.get("ok") else approval.get("result"),
-                "screens": approval.get("screens", [])})
-            if not approval.get("ok"):
-                deployments.update(rec["id"], status="rejected" if approval.get("result") == "owner_rejected" else "failed")
-                return _refuse(approval.get("result") or "device_error", deployment=rec["id"],
-                               screens=approval.get("screens", []), sent_transactions=0)
-        made = subwallets.create(rec["id"], rec["tag"], req.budget, sub_key, c, sub=sub)
-        del sub
-        deployments.update(rec["id"], subwallet=made["address"])
-        deployments.merge_hashes(rec["id"], activate=made["hashes"]["activate"], lock=made["hashes"]["lock"])
-        if not made["ok"]:
-            deployments.update(rec["id"], status="failed")
-            return _refuse("subwallet_failed", deployment=rec["id"], error=made.get("error"))
-        if approval:
-            funded = device.submit_signed(approval, c)
-        else:
-            funded = fund_burner(config.wallet("TREASURY"), made["address"], req.budget, rec["id"], rec["tag"], c)
-        deployments.merge_hashes(rec["id"], fund=funded.get("hash"))
-        if not funded.get("ok"):
-            deployments.update(rec["id"], status="failed")
-            return _refuse("funding_failed", deployment=rec["id"], result=funded)
-        rec = deployments.update(rec["id"], status="active")
+        rec = deployments.reserve(
+            req.task, req.budget, payees, req.expires_in_hours, req.vendor_class, request_id=req.request_id or None,
+            deploy_request=_request_terms(req) if req.request_id else None, plan=req.plan or None,
+            approval_threshold=req.approval_threshold, name=req.name, folder=req.folder, sentence=req.sentence,
+            sweep_when_done=req.sweep_when_done or None, speculos_payment_decision=req.speculos_payment_decision)
+        if rec.get("refused"):  # a cap (no record, no transaction), or the request_id taken outside this lock
+            prior = rec.get("refused") == "duplicate_request" and deployments.get(rec["deployment"])
+            return _replay(prior, req) if prior else rec
+        try:  # nothing in here reaches the ledger: on an error the reservation is undone and a retry starts afresh
+            sub_key = keystore.new_subagent_key(rec["id"])
+            deployments.update(rec["id"], subagent=sub_key)
+            sub = Wallet.create()  # the subwallet's address exists before anything is on-ledger, so the owner sees it
+            approval = None
+            if config.DEVICE_FUNDING:
+                # Part 3: the owner approves the budget on the device FIRST. The funding Payment takes the main wallet's
+                # next-but-one Sequence (activation takes the next), is signed now and submitted after the lock.
+                seq = int(account_info(c, main_addr)["Sequence"])
+                pay = funding_payment(main_addr, sub.classic_address, req.budget, rec["id"], rec["tag"])
+                pay = Transaction.from_dict({**pay.to_dict(), "sequence": seq + 1})
+                decision = None if config.DEVICE_DECISION == "manual" else req.speculos_decision
+                approval = device.sign(prepare(pay, c, signers_count=1, window=config.DEVICE_WINDOW_LEDGERS), decision)
+                deployments.update(rec["id"], approval={
+                    "by": approval.get("address") or config.LEDGER_ADDRESS,
+                    "result": "approved" if approval.get("ok") else approval.get("result"),
+                    "screens": approval.get("screens", [])})
+        except Exception as e:
+            if not deployments.release(rec["id"]):
+                raise
+            return _refuse("deploy_error", error=type(e).__name__, sent_transactions=0,
+                           hint="stopped before anything reached the ledger; nothing was sent")
+        if approval is not None and not approval.get("ok"):
+            out = _refuse(approval.get("result") or "device_error", deployment=rec["id"],
+                          screens=approval.get("screens", []), sent_transactions=0)
+            deployments.update(rec["id"], status="rejected" if approval.get("result") == "owner_rejected" else "failed",
+                               outcome=out)
+            return out
+        funded = None
+        try:  # from here the ledger may be touched: an error keeps the record (and its cap slot) with what it reached
+            deployments.update(rec["id"], subwallet=sub.classic_address)  # on the record before activation is sent
+            made = subwallets.create(rec["id"], rec["tag"], req.budget, sub_key, c, sub=sub)
+            del sub
+            deployments.merge_hashes(rec["id"], activate=made["hashes"]["activate"], lock=made["hashes"]["lock"])
+            if not made["ok"]:
+                out = _refuse("subwallet_failed", deployment=rec["id"], error=made.get("error"))
+                deployments.update(rec["id"], status="failed", outcome=out)
+                return out
+            if approval:
+                funded = device.submit_signed(approval, c)
+            else:
+                funded = fund_burner(config.wallet("TREASURY"), made["address"], req.budget, rec["id"], rec["tag"], c)
+            deployments.merge_hashes(rec["id"], fund=funded.get("hash"))
+            if not funded.get("ok"):
+                out = _refuse("funding_failed", deployment=rec["id"], result=funded)
+                deployments.update(rec["id"], status="failed", outcome=out)
+                return out
+            rec = deployments.update(rec["id"], status="active")
+        except Exception as e:
+            if funded is not None and funded.get("ok"):  # funded and validated: only the record lagged behind
+                return {"ok": True, **_with_balance(deployments.update(rec["id"], status="active"))}
+            now = deployments.get(rec["id"]) or rec
+            out = _refuse("deploy_interrupted", deployment=rec["id"], status=now["status"], subwallet=now.get("subwallet"),
+                          hashes=now.get("hashes") or {}, error=type(e).__name__,
+                          hint="stopped once the ledger may have been touched: check the subwallet and these hashes on "
+                               "the explorer (the owner's Ledger can recover it). It keeps its cap slot and is never "
+                               "deployed again")
+            deployments.update(rec["id"], outcome=out)
+            return out
     return {"ok": True, **_with_balance(rec)}
 
 
@@ -237,6 +333,9 @@ def wallet_create(req: WalletRequest) -> dict:
                     return _refuse("in_progress", request_id=rid, hint="this wallet is being created; nothing new was sent")
                 wallet_card.in_progress.add(rid)
         if prior is not None:
+            if prior["status"] == "deploying" and "card" not in prior:  # deploy() writes request_id first; card after
+                return _refuse("in_progress", request_id=rid, deployment=prior["id"], status=prior["status"],
+                               hint="this wallet is being created; nothing new was sent")
             same = prior.get("sentence") == req.sentence and (prior.get("folder") or None) == (req.folder or None) \
                 and (not req.card_digest or req.card_digest == prior.get("card_digest"))
             if not same:
@@ -259,7 +358,7 @@ def wallet_create(req: WalletRequest) -> dict:
                                        sweep_when_done=card["sweep_when_done"], name=card["name"], sentence=req.sentence,
                                        folder=req.folder,
                                        speculos_decision=req.speculos_decision,
-                                       speculos_payment_decision=req.speculos_payment_decision))
+                                       speculos_payment_decision=req.speculos_payment_decision, request_id=rid))
         except Exception as e:
             made = [r for r in deployments.all_() if r["id"] not in before and r.get("sentence") == req.sentence
                     and not r.get("request_id")]
@@ -454,6 +553,8 @@ def _cosign_deployment(rec: dict | None, tx_json: dict, present: bool = False, r
     amt = tx.amount
     if not isinstance(amt, IssuedCurrencyAmount) or amt.currency != config.RLUSD_CURRENCY:
         return _refuse("not_rlusd", amount=str(amt))
+    if amt.issuer != config.RLUSD_ISSUER:  # R01: the RLUSD code from any other issuer is a different token
+        return _refuse("wrong_issuer", issuer=amt.issuer, expected=config.RLUSD_ISSUER, currency=amt.currency)
     shape = _payment_shape_refusal(tx_json, amt)
     if shape:
         return shape
