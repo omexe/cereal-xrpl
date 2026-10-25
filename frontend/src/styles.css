@@ -246,3 +246,55 @@ dialog::backdrop { background: var(--color-overlay); backdrop-filter: blur(4px);
 .live-banner.error { color: var(--color-error); }
 .wallet-row.finished { color: var(--color-text-muted); }
 .wallet-row.finished .wallet-dot, .home-view .wallet-row.finished .wallet-dot { background: var(--color-marker-inactive); }
+
+/* unit 6 */
+/* Live Settings (I06, I07): connection, policy, vendors, security events, sweeps, exports. The dialog header stays
+   put and the sections scroll inside the dialog. */
+dialog:has(.settings-live) { width: min(640px, calc(100vw - 32px)); }
+dialog:has(.settings-live) .dialog-content { display: flex; flex-direction: column; max-height: calc(100svh - 50px); }
+dialog:has(.settings-live) .dialog-content > header { flex-shrink: 0; }
+.settings-live { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 -26px -26px; padding: 0 26px 26px; }
+.settings-live .dialog-description { margin-bottom: 0; }
+.settings-live a { color: var(--color-accent); text-decoration: none; }
+.settings-live a:hover { text-decoration: underline; }
+.settings-live > .settings-wallet { margin-top: 20px; }
+.settings-section { border-top: 1px solid var(--color-border); padding-top: 20px; margin-top: 20px; }
+.settings-section-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.settings-section h3 { font: var(--font-control); margin: 0; }
+.settings-section h4 { font: var(--font-label); color: var(--color-text-muted); margin: 20px 0 10px; }
+.settings-rows { font: var(--font-ui); display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: 10px 16px; margin: 0; }
+.settings-rows dt { color: var(--color-text-secondary); }
+.settings-rows dd { font: var(--font-control); margin: 0; text-align: right; overflow-wrap: anywhere; }
+.settings-rows dd.settings-down { color: var(--color-error); }
+.settings-sub { display: block; font: var(--font-caption); color: var(--color-text-muted); }
+.settings-note { font: var(--font-caption); color: var(--color-text-secondary); margin: 0 0 12px; }
+.settings-section .settings-rows + .settings-note, .settings-section .settings-rows + .settings-error { margin: 12px 0 0; }
+.settings-error { font: var(--font-ui); color: var(--color-error); margin: 0 0 12px; }
+.settings-empty { font: var(--font-body); color: var(--color-text-secondary); padding: 16px 15px; background: var(--color-surface-subtle); border-radius: 5px; }
+.settings-refresh { font: var(--font-control); color: var(--color-accent); display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px; border-radius: 5px; flex-shrink: 0; }
+.settings-refresh:hover:not(:disabled) { background: var(--color-surface-hover); filter: none; }
+.settings-refresh:disabled { color: var(--color-text-muted); }
+.settings-refresh svg, .settings-download svg { width: var(--icon-inline); height: var(--icon-inline); stroke-width: var(--icon-stroke); flex-shrink: 0; }
+.settings-cards { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.settings-card { background: var(--color-surface-subtle); border-radius: 5px; padding: 14px 15px; flex-shrink: 0; }
+.settings-card-head { display: flex; align-items: baseline; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; }
+.settings-card-head strong { font: var(--font-control); min-width: 0; overflow-wrap: anywhere; }
+.settings-card-head time, .settings-card-head > span { font: var(--font-caption); color: var(--color-text-muted); }
+.settings-card-head a { font: var(--font-caption); }
+.settings-card p { font: var(--font-ui); margin-top: 6px; overflow-wrap: anywhere; }
+.settings-credential { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.settings-credential > span:first-child { font: var(--font-label); }
+.settings-card-meta { font: var(--font-caption); display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 8px 0 0; }
+.settings-card-meta dt { color: var(--color-text-muted); }
+.settings-card-meta dd { margin: 0; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.settings-events { max-height: 380px; overflow-y: auto; overscroll-behavior: contain; border-radius: 5px; }
+.settings-events:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 4px; }
+.settings-export-count { font: var(--font-ui); margin: 0 0 12px; }
+.settings-downloads { display: flex; flex-wrap: wrap; gap: 10px; }
+.settings-download { font: var(--font-control); display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--color-border); border-radius: 5px; padding: 10px 14px; }
+.settings-live a.settings-download:hover { text-decoration: none; background: var(--color-surface-hover); }
+@media (max-width: 760px) {
+  .settings-rows { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .settings-rows dd { text-align: left; margin-bottom: 10px; }
+  .settings-events { max-height: none; overflow: visible; }
+}
