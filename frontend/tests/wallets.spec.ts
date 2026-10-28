@@ -76,8 +76,8 @@ test('the wallet graphic navigates: spheres open active wallets, the core goes h
   // Home has the same map, with the core selected: its spheres open wallets too.
   const home = page.locator('.home-illustration');
   await expect(home.getByRole('button', { name: /^Home\. Total wallet/ })).toHaveAttribute('aria-pressed', 'true');
-  await home.getByRole('button', { name: /^Market sizing, wallet/ }).click();
-  await expect(page.locator('.budget-label h1')).toHaveText('Market sizing');
+  await home.getByRole('button', { name: /^Contact verification, wallet/ }).click();
+  await expect(page.locator('.budget-label h1')).toHaveText('Contact verification');
   expect(errors).toEqual([]);
 });
 
@@ -195,7 +195,7 @@ test('funding updates the available balance without fabricating spending', async
   await expect(page.locator('.budget-used')).toHaveText('$4.40 / $20.00');
   await expect(page.locator('.transaction-card')).toHaveCount(5);
   await page.getByRole('button', { name: 'Home', exact: true }).click();
-  await expect(page.locator('.home-summary h1')).toHaveText('$2513.40');
+  await expect(page.locator('.home-summary h1')).toHaveText('$1680.55');
 });
 
 test('home creates a wallet from a description, then archive and restore preserve it', async ({ page }) => {
@@ -214,7 +214,7 @@ test('home creates a wallet from a description, then archive and restore preserv
   await page.getByRole('button', { name: 'Restore wallet', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Add funds', exact: true })).toBeEnabled();
   await page.reload();
-  await page.getByRole('button', { name: '+ 3 more', exact: true }).click();
+  await page.getByRole('button', { name: '+ 1 more', exact: true }).click();
   await page.getByRole('button', { name: 'Open Launch research', exact: true }).click();
   await expect(page.locator('.budget h1')).toHaveText('Launch research');
 });
@@ -281,7 +281,7 @@ test('desktop and mobile keep the composer reachable and activity contained', as
 });
 
 
-test('mock data fills existing and archived wallets once while preserving user edits', async ({ page }) => {
+test('mock data fills existing wallets once while preserving user edits', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => {
     const state = JSON.parse(localStorage.getItem('cereal-demo-v1')!);

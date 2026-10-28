@@ -56,6 +56,10 @@ const walletNames = [
   'Lead enrichment', 'Prospect discovery', 'CRM updates', 'Contact verification',
   'Market sizing', 'Competitor research', 'October outreach', 'Pilot research',
 ];
+/** The demo opens with the first four of these wallets, all unfiled. The other four names stay only so browsers that
+ * loaded the earlier eight-wallet demo can recognise and drop them (see loadWorkspace). */
+const seededIndexes = [0, 1, 2, 3];
+const retiredSeeds = new Set([4, 5, 6, 7].map(i => `wallet-${i + 1}`));
 const folderNames: Record<string, string> = { 'research-1': 'Sales operations', 'research-2': 'Market research' };
 
 const mockProfiles = [
@@ -110,10 +114,10 @@ export function initialWorkspace(): Workspace {
   }
   return {
     folders: Object.entries(folderNames).map(([id, name]) => ({ id, name })),
-    wallets: Array.from({ length: 8 }, (_, i) => populateMockWallet({
+    wallets: seededIndexes.map(i => populateMockWallet({
       id: `wallet-${i + 1}`, name: walletNames[i], balance: i === 0 ? 1125.40 : 0,
       transactions: i === 0 ? sampleTransactions.map(transaction => ({ ...transaction })) : [],
-      archived: i >= 6, folderId: i === 4 || i === 5 ? 'research-2' : undefined,
+      archived: false,
       constraints: { ...defaultConstraints, merchants: [...defaultConstraints.merchants] },
     }, i)),
   };
@@ -142,7 +146,11 @@ export function loadWorkspace(): Workspace {
         folders: state.folders.map(folder => ({ ...folder,
           name: folder.name === 'Market Research' ? folderNames[folder.id] ?? folder.name : folder.name,
         })),
-        wallets: state.wallets.map(wallet => {
+        // Seeded wallets the demo no longer ships are dropped once, unless the user renamed them.
+        wallets: state.wallets.filter(wallet => {
+          const index = walletNames.findIndex((_, i) => wallet.id === `wallet-${i + 1}`);
+          return !(retiredSeeds.has(wallet.id) && (wallet.name === walletNames[index] || wallet.name === 'Hubspot Product X Research'));
+        }).map(wallet => {
           delete (wallet as Wallet & { demoPurpose?: string }).demoPurpose;
           const index = walletNames.findIndex((_, i) => wallet.id === `wallet-${i + 1}`);
           const transactions = wallet.transactions === undefined
